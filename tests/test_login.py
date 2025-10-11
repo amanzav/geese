@@ -3,6 +3,7 @@ Test script for WaterlooWorks authentication
 """
 
 import os
+import time
 from dotenv import load_dotenv
 from modules.auth import WaterlooWorksAuth
 
@@ -19,7 +20,6 @@ def main():
         print("❌ ERROR: Add credentials to .env file")
         return
     
-    # Login
     auth = WaterlooWorksAuth(username, password)
     
     try:
@@ -27,7 +27,6 @@ def main():
         
         # Keep browser open for 10 seconds
         print("Browser will stay open for 10 seconds...")
-        import time
         time.sleep(10)
         
     except Exception as e:

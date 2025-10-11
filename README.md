@@ -7,11 +7,7 @@ AI-powered automation tool for University of Waterloo co-op students to streamli
 ### 1. Install Dependencies
 
 ```bash
-# Install Python packages
 pip install -r requirements.txt
-
-# Install browser driver (if using Playwright)
-playwright install chromium
 ```
 
 ### 2. Set Up Environment
@@ -25,51 +21,48 @@ cp .env.example .env
 # WATERLOOWORKS_PASSWORD=your_password
 ```
 
-### 3. Test Login
+### 3. Run Tests
 
 ```bash
-# Run the login test
-python test_login.py
+# Test authentication
+python tests/test_login.py
+
+# Test job scraping
+python tests/test_scraper.py
 ```
 
 ## 📁 Project Structure
 
 ```
-geese/
+waterloo_works_automator/
 ├── modules/           # Core modules
-│   ├── auth.py       # ✅ Authentication (Phase 1)
-│   ├── scraper.py    # 🔄 Job scraping (Phase 1)
-│   ├── matcher.py    # 📋 Resume matching (Phase 2)
-│   ├── saver.py      # 💾 Save jobs (Phase 3)
-│   └── applicator.py # 🤖 Auto-apply (Phase 4)
-├── data/             # Scraped data & sessions
-├── saved_jobs/       # Saved job listings
-├── input/            # Your resume
-└── logs/             # Application logs
+│   ├── auth.py       # ✅ Authentication
+│   └── scraper.py    # ✅ Job scraping
+├── tests/            # Test scripts
+│   ├── test_login.py
+│   └── test_scraper.py
+├── docs/             # Documentation
+├── data/             # Scraped data (gitignored)
+├── saved_jobs/       # Saved job listings (gitignored)
+└── logs/             # Application logs (gitignored)
 ```
 
 ## 📝 Development Status
 
-- ✅ **Phase 1a:** Authentication module
-- 🔄 **Phase 1b:** Job scraping (next)
-- 📋 **Phase 2:** Resume matching
-- 💾 **Phase 3:** Job management
-- 🤖 **Phase 4:** Auto-apply
+- ✅ **Phase 1:** Authentication & Job Scraping
+- 📋 **Phase 2:** Resume matching (planned)
+- 💾 **Phase 3:** Job management (planned)
+- 🤖 **Phase 4:** Auto-apply (planned)
 
 ## 📚 Documentation
 
-- See `MVP.md` for detailed MVP specification
-- See `PRD.md` for full product requirements
+See `docs/` folder for detailed specifications
 
 ## 🔒 Security
 
 - Never commit your `.env` file
 - Credentials stored locally only
 - Session files are gitignored
-
-## 📄 License
-
-MIT - Built for University of Waterloo co-op students
 
 ---
 

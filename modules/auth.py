@@ -9,6 +9,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+# Timeout constants
+TIMEOUT_SHORT = 10
+TIMEOUT_MEDIUM = 30
+TIMEOUT_LONG = 60
+
 
 class WaterlooWorksAuth:
     """Handle authentication for WaterlooWorks"""
@@ -40,7 +45,7 @@ class WaterlooWorksAuth:
         
         # Enter email
         print("  → Entering email...")
-        email_field = WebDriverWait(self.driver, 10).until(
+        email_field = WebDriverWait(self.driver, TIMEOUT_SHORT).until(
             EC.presence_of_element_located((By.ID, "userNameInput"))
         )
         email_field.send_keys(self.username)
@@ -48,7 +53,7 @@ class WaterlooWorksAuth:
         
         # Enter password
         print("  → Entering password...")
-        password_field = WebDriverWait(self.driver, 10).until(
+        password_field = WebDriverWait(self.driver, TIMEOUT_SHORT).until(
             EC.presence_of_element_located((By.ID, "passwordInput"))
         )
         password_field.send_keys(self.password)
@@ -56,13 +61,13 @@ class WaterlooWorksAuth:
         
         # Wait for Duo 2FA
         print("\n⏳ Waiting for Duo 2FA (approve on your phone)...")
-        trust_button = WebDriverWait(self.driver, 60).until(
+        trust_button = WebDriverWait(self.driver, TIMEOUT_LONG).until(
             EC.presence_of_element_located((By.ID, "trust-browser-button"))
         )
         trust_button.click()
         
         # Wait for WaterlooWorks to load
-        WebDriverWait(self.driver, 30).until(
+        WebDriverWait(self.driver, TIMEOUT_MEDIUM).until(
             EC.presence_of_element_located((By.XPATH, '//h1[text()="WaterlooWorks"]'))
         )
         
