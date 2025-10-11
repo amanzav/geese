@@ -1,0 +1,10 @@
+# Core automation
+selenium>=4.15.0
+
+# Environment management
+python-dotenv>=1.0.0
+
+# Future dependencies (add when needed):
+# rich>=13.7.0          # For beautiful CLI
+# openai>=1.3.0         # For LLM integration
+# PyPDF2>=3.0.0         # For PDF parsing
