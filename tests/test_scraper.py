@@ -3,8 +3,14 @@ Test script for job scraping functionality
 """
 
 import os
+import sys
 import time
 import traceback
+from pathlib import Path
+
+# Add parent directory to path so we can import modules
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from dotenv import load_dotenv
 from modules.auth import WaterlooWorksAuth
 from modules.scraper import WaterlooWorksScraper
@@ -31,8 +37,9 @@ def main():
         # Create scraper
         scraper = WaterlooWorksScraper(auth.driver)
         
-        # Navigate to jobs page
-        scraper.go_to_jobs_page()
+        # Navigate to jobs page with program filter
+        # Change "38688" to your program's filter value
+        scraper.go_to_jobs_page(program_filter_value="38688")
         
         # Check pagination
         try:

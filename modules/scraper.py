@@ -25,23 +25,63 @@ class WaterlooWorksScraper:
         """
         self.driver = driver
     
-    def go_to_jobs_page(self):
-        """Navigate to the all jobs page and click the filter button"""
+    def go_to_jobs_page(self, program_filter_value=None):
+        """
+        Navigate to the all jobs page and apply filters
+        
+        Args:
+            program_filter_value (str): Program filter checkbox value (e.g., "38688")
+        """
         print("📋 Navigating to jobs page...")
         
         self.driver.get("https://waterlooworks.uwaterloo.ca/myAccount/co-op/full/jobs.htm")
         time.sleep(PAGE_LOAD_WAIT)
         
-        print("🔘 Clicking filter button...")
+        print("🔘 Clicking initial filter button...")
         filter_button = WebDriverWait(self.driver, TIMEOUT_DEFAULT).until(
             EC.presence_of_element_located(
                 (By.CSS_SELECTOR, '.doc-viewer--filter-bar button')
             )
         )
         filter_button.click()
-        
-        print("✅ Jobs page loaded\n")
         time.sleep(PAGE_LOAD_WAIT)
+        
+        # Apply program filter if provided
+        if program_filter_value:
+            print(f"🎯 Applying program filter ({program_filter_value})...")
+            
+            # Click the filter menu button
+            filter_menu_button = WebDriverWait(self.driver, TIMEOUT_DEFAULT).until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, '.btn__default.btn--black.tag-rail__menu-btn')
+                )
+            )
+            filter_menu_button.click()
+            time.sleep(PAGE_LOAD_WAIT)
+            
+            # Find and click the program checkbox using JavaScript (to avoid click interception)
+            program_checkbox = WebDriverWait(self.driver, TIMEOUT_DEFAULT).until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, f'.color--bg--white.doc-viewer input[value="{program_filter_value}"]')
+                )
+            )
+            
+            # Use JavaScript click to bypass the covering label
+            self.driver.execute_script("arguments[0].click();", program_checkbox)
+            time.sleep(PAGE_LOAD_WAIT)
+            
+            # Close the sidebar using JavaScript
+            close_button = WebDriverWait(self.driver, TIMEOUT_DEFAULT).until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, '.js--btn--close-sidebar')
+                )
+            )
+            self.driver.execute_script("arguments[0].click();", close_button)
+            time.sleep(PAGE_LOAD_WAIT)
+            
+            print("✅ Program filter applied\n")
+        else:
+            print("✅ Jobs page loaded (no filter applied)\n")
     
     def get_job_table(self):
         """
