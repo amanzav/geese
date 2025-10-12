@@ -4,7 +4,8 @@ Resume Matcher - Matches job descriptions to resume using embeddings
 
 import json
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
+from datetime import datetime
 from pypdf import PdfReader
 
 from modules.embeddings import EmbeddingsManager
@@ -19,10 +20,11 @@ def load_config(config_path: str = "config.json") -> Dict:
 class ResumeMatcher:
     """Analyzes job descriptions against resume to calculate match scores"""
     
-    def __init__(self, config_path: str = "config.json"):
+    def __init__(self, config_path: str = "config.json", cache_path: str = "data/job_matches_cache.json"):
         """Initialize matcher with configuration"""
         self.config = load_config(config_path)
         self.matcher_config = self.config.get("matcher", {})
+        self.cache_path = cache_path
         
         # Initialize embeddings manager
         model_name = self.matcher_config.get("embedding_model")
@@ -40,6 +42,46 @@ class ResumeMatcher:
             self.embeddings.build_resume_index(self.resume_bullets)
         
         print(f"✅ Resume loaded with {len(self.resume_bullets)} bullets\n")
+        
+        # Load match cache
+        self.match_cache = self._load_match_cache()
+        print(f"📦 Loaded {len(self.match_cache)} cached job matches\n")
+    
+    def _load_match_cache(self) -> Dict[str, Dict]:
+        """Load cached match results from disk"""
+        if not os.path.exists(self.cache_path):
+            return {}
+        
+        try:
+            with open(self.cache_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"⚠️  Error loading match cache: {e}")
+            return {}
+    
+    def _save_match_cache(self):
+        """Save match cache to disk"""
+        try:
+            os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
+            with open(self.cache_path, 'w', encoding='utf-8') as f:
+                json.dump(self.match_cache, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"⚠️  Error saving match cache: {e}")
+    
+    def _get_cached_match(self, job_id: str) -> Optional[Dict]:
+        """Get cached match result for a job ID"""
+        return self.match_cache.get(job_id)
+    
+    def _cache_match(self, job_id: str, match_result: Dict):
+        """Cache a match result for a job ID"""
+        match_result["last_updated"] = datetime.now().isoformat()
+        self.match_cache[job_id] = match_result
+    
+    def _load_resume(self) -> List[str]:
+        
+        # Load match cache
+        self.match_cache = self._load_match_cache()
+        print(f"📦 Loaded {len(self.match_cache)} cached job matches\n")
     
     def _load_resume(self) -> List[str]:
         """Load resume from cached text file or PDF"""
@@ -101,11 +143,17 @@ class ResumeMatcher:
         if job.get("additional_requirements"):
             requirements.extend(req.strip() for req in job["additional_requirements"] if req.strip())
         
-        # Fallback to description if no structured data
-        if not requirements and job.get("description"):
-            desc = job["description"]
-            sentences = [s.strip() for s in desc.split('.') if 20 <= len(s.strip()) <= 200]
-            requirements = sentences[:10]
+        # Fallback: combine all text fields if no structured data
+        if not requirements:
+            desc_parts = []
+            for field in ['summary', 'responsibilities', 'skills', 'employment_location_arrangement', 'work_term_duration', 'title']:
+                if job.get(field) and job[field] != 'N/A':
+                    desc_parts.append(job[field])
+            
+            if desc_parts:
+                desc = "\n\n".join(desc_parts)
+                sentences = [s.strip() for s in desc.split('.') if 20 <= len(s.strip()) <= 200]
+                requirements = sentences[:10]
         
         return requirements
     
@@ -185,7 +233,12 @@ class ResumeMatcher:
     
     def _calculate_seniority_alignment(self, job: Dict, matched_bullets: Dict[str, float]) -> float:
         """Calculate if experience level matches job seniority"""
-        job_text = (job.get("title", "") + " " + job.get("description", "")).lower()
+        # Combine all text fields for analysis
+        job_text_parts = []
+        for field in ['title', 'level', 'summary', 'responsibilities', 'skills', 'work_term_duration']:
+            if job.get(field) and job[field] != 'N/A':
+                job_text_parts.append(job[field])
+        job_text = " ".join(job_text_parts).lower()
         
         is_junior = any(kw in job_text for kw in ["junior", "entry", "intern", "new grad"])
         is_senior = any(kw in job_text for kw in ["senior", "lead", "architect", "principal"])
@@ -202,14 +255,51 @@ class ResumeMatcher:
             return min(1.0, 0.5 + (leadership_count * 0.15))
         return 0.7
     
-    def batch_analyze(self, jobs: List[Dict]) -> List[Dict]:
-        """Analyze multiple jobs and return sorted by fit score"""
+    def batch_analyze(self, jobs: List[Dict], force_rematch: bool = False) -> List[Dict]:
+        """
+        Analyze multiple jobs and return sorted by fit score
+        
+        Args:
+            jobs: List of job dictionaries to analyze
+            force_rematch: If True, ignore cache and recalculate all matches
+        
+        Returns:
+            List of results with job and match data, sorted by fit score
+        """
         results = []
+        cached_count = 0
+        new_count = 0
         
         for i, job in enumerate(jobs, 1):
-            print(f"📊 Analyzing job {i}/{len(jobs)}: {job.get('title', 'Unknown')}")
+            job_id = job.get('id', f'job_{i}')
+            job_title = job.get('title', 'Unknown')
+            
+            # Check cache first (unless force_rematch is True)
+            if not force_rematch:
+                cached_match = self._get_cached_match(job_id)
+                if cached_match:
+                    print(f"✓ [{i}/{len(jobs)}] Using cached match for: {job_title}")
+                    results.append({"job": job, "match": cached_match})
+                    cached_count += 1
+                    continue
+            
+            # Calculate new match
+            print(f"🔍 [{i}/{len(jobs)}] Analyzing: {job_title}")
             match_result = self.analyze_match(job)
+            
+            # Cache the result
+            self._cache_match(job_id, match_result)
+            
             results.append({"job": job, "match": match_result})
+            new_count += 1
+        
+        # Save cache after processing all jobs
+        if new_count > 0:
+            self._save_match_cache()
+            print(f"\n💾 Saved {new_count} new matches to cache")
+        
+        if cached_count > 0:
+            print(f"📦 Used {cached_count} cached matches")
         
         results.sort(key=lambda x: x["match"]["fit_score"], reverse=True)
         return results

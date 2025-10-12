@@ -9,7 +9,7 @@
     "top_k": 8,
     "llm_provider": "gemini",
     "use_synonyms": false,
-    "min_match_score": 70,
+    "min_match_score": 30,
     "weights": {
       "required_coverage": 0.60,
       "skill_match": 0.25,
@@ -17,7 +17,7 @@
     }
   },
   
-  "preferred_locations": ["Toronto", "Remote", "Waterloo", "Kitchener"],
-  "keywords_to_match": ["Python", "AI", "ML", "Full Stack", "React", "Node.js"],
+  "preferred_locations": ["Toronto", "Waterloo", "Remote", "Kitchener", "Ontario"],
+  "keywords_to_match": [],
   "companies_to_avoid": []
 }

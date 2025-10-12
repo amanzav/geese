@@ -22,7 +22,7 @@ class WaterlooWorksScraper:
         """
         self.driver = driver
     
-    def go_to_jobs_page(self, program_filter_value=None):
+    def go_to_jobs_page(self):
         """Navigate to jobs page and apply optional program filter"""
         print("📋 Navigating to jobs page...")
         
@@ -37,34 +37,32 @@ class WaterlooWorksScraper:
         time.sleep(PAGE_LOAD)
         
         # Apply program filter if provided
-        if program_filter_value:
-            print(f"🎯 Applying program filter ({program_filter_value})...")
-            
-            filter_menu_button = WebDriverWait(self.driver, TIMEOUT).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, '.btn__default.btn--black.tag-rail__menu-btn'))
+        print(f"🎯 Applying program filter...")
+        
+        filter_menu_button = WebDriverWait(self.driver, TIMEOUT).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, '.btn__default.btn--black.tag-rail__menu-btn'))
+        )
+        filter_menu_button.click()
+        time.sleep(PAGE_LOAD)
+        
+        # Find and click the program checkbox
+        program_checkbox = WebDriverWait(self.driver, TIMEOUT).until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, '.color--bg--white.doc-viewer input')
             )
-            filter_menu_button.click()
-            time.sleep(PAGE_LOAD)
-            
-            # Find and click the program checkbox
-            program_checkbox = WebDriverWait(self.driver, TIMEOUT).until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, f'.color--bg--white.doc-viewer input[value="{program_filter_value}"]')
-                )
-            )
-            self.driver.execute_script("arguments[0].click();", program_checkbox)
-            time.sleep(PAGE_LOAD)
-            
-            # Close the sidebar
-            close_button = WebDriverWait(self.driver, TIMEOUT).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, '.js--btn--close-sidebar'))
-            )
-            self.driver.execute_script("arguments[0].click();", close_button)
-            time.sleep(PAGE_LOAD)
-            
-            print("✅ Program filter applied\n")
-        else:
-            print("✅ Jobs page loaded (no filter applied)\n")
+        )
+        self.driver.execute_script("arguments[0].click();", program_checkbox)
+        time.sleep(PAGE_LOAD)
+        
+        # Close the sidebar
+        close_button = WebDriverWait(self.driver, TIMEOUT).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, '.js--btn--close-sidebar'))
+        )
+        self.driver.execute_script("arguments[0].click();", close_button)
+        time.sleep(PAGE_LOAD)
+        
+        print("✅ Program filter applied\n")
+
     
     def get_job_table(self):
         """Get all rows from the current job listings table"""
@@ -98,7 +96,7 @@ class WaterlooWorksScraper:
                 "company": get_cell_text(cells[1]),
                 "division": get_cell_text(cells[2]),
                 "openings": get_cell_text(cells[3], "0"),
-                "city": get_cell_text(cells[4]),
+                "location": get_cell_text(cells[4]),  # Use 'location' instead of 'city'
                 "level": get_cell_text(cells[5]),
                 "applications": get_cell_text(cells[6], "0"),
                 "deadline": get_cell_text(cells[7]),
@@ -151,23 +149,29 @@ class WaterlooWorksScraper:
                 "summary": "N/A",
                 "responsibilities": "N/A",
                 "skills": "N/A",
-                "additional_info": "N/A"
+                "additional_info": "N/A",
+                "employment_location_arrangement": "N/A",
+                "work_term_duration": "N/A"
             }
             
             for div in job_divs:
                 text = div.get_attribute("innerText").strip()
                 if text.startswith("Job Summary:"):
-                    sections["summary"] = text
+                    sections["summary"] = text.replace("Job Summary:", "", 1).strip()
                 elif text.startswith("Job Responsibilities:"):
-                    sections["responsibilities"] = text
+                    sections["responsibilities"] = text.replace("Job Responsibilities:", "", 1).strip()
                 elif text.startswith("Required Skills:"):
-                    sections["skills"] = text
+                    sections["skills"] = text.replace("Required Skills:", "", 1).strip()
                 elif text.startswith("Additional Application Information:"):
-                    sections["additional_info"] = text
+                    sections["additional_info"] = text.replace("Additional Application Information:", "", 1).strip()
+                elif text.startswith("Employment Location Arrangement:"):
+                    sections["employment_location_arrangement"] = text.replace("Employment Location Arrangement:", "", 1).strip()
+                elif text.startswith("Work Term Duration:"):
+                    sections["work_term_duration"] = text.replace("Work Term Duration:", "", 1).strip()
             
             # Add description fields to job data
             job_data.update(sections)
-            job_data["description"] = f"{sections['summary']}\n\n{sections['responsibilities']}\n\n{sections['skills']}"
+            # Note: No longer creating combined 'description' field to avoid duplication
             
             # Close the job details panel
             close_buttons = self.driver.find_elements(
@@ -187,28 +191,69 @@ class WaterlooWorksScraper:
                 del job_data["row_element"]
             return job_data
     
-    def scrape_current_page(self, include_details=False):
-        """Scrape all jobs from the current page"""
+    def scrape_current_page(self, include_details=False, existing_jobs=None, save_callback=None, all_jobs=None, save_every=5):
+        """Scrape all jobs from the current page, skipping already-scraped jobs
+        
+        Args:
+            include_details: Whether to deep scrape job details
+            existing_jobs: Dict of {job_id: job_data} to skip already-scraped jobs
+            save_callback: Function to call for incremental saves
+            all_jobs: Accumulated list of all jobs (for incremental saves)
+            save_every: Save after this many new jobs scraped (default: 5)
+        """
+        if existing_jobs is None:
+            existing_jobs = {}
+        if all_jobs is None:
+            all_jobs = []
+        
         jobs = []
         rows = self.get_job_table()
+        new_jobs_count = 0
         
         for i, row in enumerate(rows, 1):
             job_data = self.parse_job_row(row)
             if job_data and job_data.get('id'):
-                if include_details:
-                    print(f"  → Getting details for job {i}/{len(rows)}: {job_data.get('title', 'Unknown')}")
-                    job_data = self.get_job_details(job_data)
+                job_id = job_data.get('id')
+                
+                # Check if job already exists in cache
+                if job_id in existing_jobs:
+                    print(f"  ⏭️  Skipping job {i}/{len(rows)}: {job_data.get('title', 'Unknown')} (already cached)")
+                    # Use cached version (already has details)
+                    jobs.append(existing_jobs[job_id])
                 else:
-                    # Remove row_element if not getting details
-                    if "row_element" in job_data:
-                        del job_data["row_element"]
-                jobs.append(job_data)
+                    # New job - scrape details if requested
+                    if include_details:
+                        print(f"  → Getting details for job {i}/{len(rows)}: {job_data.get('title', 'Unknown')}")
+                        job_data = self.get_job_details(job_data)
+                    else:
+                        # Remove row_element if not getting details
+                        if "row_element" in job_data:
+                            del job_data["row_element"]
+                    jobs.append(job_data)
+                    new_jobs_count += 1
+                    
+                    # Incremental save after every N new jobs
+                    if save_callback and save_every > 0 and new_jobs_count % save_every == 0:
+                        all_jobs.extend(jobs)
+                        jobs = []
+                        print(f"  💾 Auto-saving progress ({len(all_jobs)} jobs total)...")
+                        save_callback(all_jobs)
         
-        print(f"✅ Parsed {len(jobs)} jobs from this page\n")
+        print(f"✅ Parsed {len(jobs)} jobs from this page ({new_jobs_count} new)\n")
         return jobs
     
-    def scrape_all_jobs(self, include_details=False):
-        """Scrape all jobs from all pages"""
+    def scrape_all_jobs(self, include_details=False, existing_jobs=None, save_callback=None, save_every=5):
+        """Scrape all jobs from all pages with incremental saving
+        
+        Args:
+            include_details: Whether to deep scrape job details
+            existing_jobs: Dict of {job_id: job_data} to skip already-scraped jobs
+            save_callback: Function called periodically with accumulated jobs
+            save_every: Save after this many new jobs scraped (default: 5)
+        """
+        if existing_jobs is None:
+            existing_jobs = {}
+        
         print("🔍 Starting full job scrape...\n")
         all_jobs = []
         
@@ -223,8 +268,19 @@ class WaterlooWorksScraper:
         # Scrape all pages
         for page in range(1, num_pages + 1):
             print(f"📄 Scraping page {page}/{num_pages}...")
-            jobs = self.scrape_current_page(include_details=include_details)
+            jobs = self.scrape_current_page(
+                include_details=include_details,
+                existing_jobs=existing_jobs,
+                save_callback=save_callback,
+                all_jobs=all_jobs,
+                save_every=save_every
+            )
             all_jobs.extend(jobs)
+            
+            # Save progress after each page (in case save_every wasn't triggered)
+            if save_callback:
+                print(f"💾 Saving page progress ({len(all_jobs)} jobs total)...\n")
+                save_callback(all_jobs)
             
             # Go to next page if not the last one
             if page < num_pages:
