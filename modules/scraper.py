@@ -8,19 +8,23 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from .utils import TIMEOUT, PAGE_LOAD, get_cell_text, calculate_chances
+from .llm_assistant import CompensationExtractor
 
 
 class WaterlooWorksScraper:
     """Handle job scraping on WaterlooWorks"""
 
-    def __init__(self, driver):
+    def __init__(self, driver, llm_provider="gemini"):
         """
         Initialize scraper with an existing browser driver
 
         Args:
             driver: Selenium WebDriver instance (from auth)
+            llm_provider: LLM provider for compensation extraction ("gemini" or "openai")
         """
         self.driver = driver
+        self.llm_provider = llm_provider
+        self.compensation_extractor = None  # Lazy initialization
 
     def go_to_jobs_page(self):
         """Navigate to jobs page and apply optional program filter"""
@@ -163,6 +167,7 @@ class WaterlooWorksScraper:
                 "additional_info": "N/A",
                 "employment_location_arrangement": "N/A",
                 "work_term_duration": "N/A",
+                "compensation_and_benefits_raw": "N/A",
             }
 
             for div in job_divs:
@@ -187,6 +192,39 @@ class WaterlooWorksScraper:
                     sections["work_term_duration"] = text.replace(
                         "Work Term Duration:", "", 1
                     ).strip()
+                elif text.startswith("Compensation and Benefits:"):
+                    sections["compensation_and_benefits_raw"] = text.replace(
+                        "Compensation and Benefits:", "", 1
+                    ).strip()
+
+            # Extract compensation using LLM
+            if sections["compensation_and_benefits_raw"] != "N/A":
+                try:
+                    # Lazy initialize compensation extractor
+                    if self.compensation_extractor is None:
+                        self.compensation_extractor = CompensationExtractor(
+                            provider=self.llm_provider
+                        )
+                    
+                    comp_data = self.compensation_extractor.extract_compensation(
+                        sections["compensation_and_benefits_raw"]
+                    )
+                    sections["compensation"] = comp_data
+                except Exception as e:
+                    print(f"  ⚠️  Error extracting compensation: {e}")
+                    sections["compensation"] = {
+                        "value": None,
+                        "currency": None,
+                        "original_text": sections["compensation_and_benefits_raw"],
+                        "time_period": None
+                    }
+            else:
+                sections["compensation"] = {
+                    "value": None,
+                    "currency": None,
+                    "original_text": "N/A",
+                    "time_period": None
+                }
 
             # Add description fields to job data
             job_data.update(sections)
