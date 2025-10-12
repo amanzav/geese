@@ -13,6 +13,7 @@ Built by Aman Zaveri for UWaterloo co-op job search automation.
 ✅ **Smart Caching**: Match results cached by job ID - only analyzes new jobs (45x faster!)  
 ✅ **Incremental Saving**: Jobs saved every 5 scrapes - never lose progress to crashes  
 ✅ **Smart Scoring**: Weighted scoring based on coverage, skill match, and seniority alignment  
+✅ **Auto-Save to Folder**: Automatically save high-scoring jobs to WaterlooWorks folder  
 ✅ **Filtering**: Filter by location, keywords, and companies  
 ✅ **Reports**: Generate JSON and Markdown reports of best matches  
 
@@ -68,7 +69,19 @@ python main.py --cached
 python main.py --cached --force-rematch
 ```
 
-**Option E: Test with Sample Jobs**
+**Option E: Auto-Save High-Scoring Jobs (NEW!)**
+```bash
+python main.py --auto-save
+```
+This will automatically save jobs with fit score ≥ 30 to your "geese" folder in WaterlooWorks!
+
+**Option F: Real-Time Mode (RECOMMENDED!)**
+```bash
+python main.py --realtime
+```
+Process each job immediately: scrape → analyze → show score → save if qualified. Watch scores appear live!
+
+**Option G: Test with Sample Jobs**
 ```bash
 python test_analyze.py
 ```
@@ -162,6 +175,39 @@ waterloo_works_automator/
 - 🟡 Good (50-69): Strong candidate
 - 🟠 Moderate (30-49): Worth considering
 - 🔴 Weak (<30): Probably skip
+
+---
+
+## 🆕 Auto-Save to WaterlooWorks Folder
+
+The `--auto-save` flag automatically saves high-scoring jobs to a folder in WaterlooWorks!
+
+### How it works:
+1. Run with `--auto-save` flag
+2. After analysis, jobs with fit score ≥ threshold are identified
+3. Each job is automatically saved to your "geese" folder in WaterlooWorks
+4. Browser stays open during the process
+
+### Configuration:
+```json
+{
+  "matcher": {
+    "auto_save_threshold": 50  // Save jobs with score ≥ 50
+  },
+  "waterlooworks_folder": "geese"  // Folder name in WaterlooWorks
+}
+```
+
+### Usage:
+```bash
+# Full pipeline with auto-save
+python main.py --auto-save
+
+# Quick mode with auto-save
+python main.py --quick --auto-save
+```
+
+**Note:** Make sure you have a folder named "geese" (or your configured name) in WaterlooWorks before using this feature!
 
 ---
 

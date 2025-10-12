@@ -21,15 +21,231 @@ class JobAnalyzer:
         """Initialize analyzer with configuration"""
         self.config = load_config(config_path)
         self.matcher = ResumeMatcher(config_path)
+        self.auth = None  # Will be set during scraping
+        self.scraper = None  # Will be set during scraping
         print("✅ Job Analyzer initialized\n")
     
-    def run_full_pipeline(self, detailed: bool = True, force_rematch: bool = False) -> List[Dict]:
+    def run_realtime_pipeline(self, auto_save_to_folder: bool = True) -> List[Dict]:
         """
-        Run complete pipeline: scrape → match → filter → save
+        Run REAL-TIME pipeline: scrape → analyze → save IMMEDIATELY per job
+        
+        Shows score for each job as it's processed and saves high-scoring jobs instantly.
+        
+        Args:
+            auto_save_to_folder: If True, save high-scoring jobs to WW folder immediately
+        
+        Returns:
+            List of analyzed jobs sorted by fit score
+        """
+        print("=" * 70)
+        print("🚀 WATERLOO WORKS REAL-TIME JOB ANALYZER")
+        print("=" * 70)
+        print()
+        
+        # Get configuration
+        auto_save_threshold = self.config.get("matcher", {}).get("auto_save_threshold", 30)
+        folder_name = self.config.get("waterlooworks_folder", "geese")
+        preferred_locations = self.config.get("preferred_locations", [])
+        keywords = self.config.get("keywords_to_match", [])
+        avoid_companies = self.config.get("companies_to_avoid", [])
+        
+        print(f"⚙️  Auto-save threshold: {auto_save_threshold}")
+        print(f"📁 Target folder: '{folder_name}'")
+        print()
+        
+        # Step 1: Login and navigate
+        print("🔐 Logging into WaterlooWorks...")
+        username = input("Username (UW email): ").strip()
+        import getpass
+        password = getpass.getpass("Password: ")
+        print()
+        
+        from modules.auth import WaterlooWorksAuth
+        auth = WaterlooWorksAuth(username, password)
+        auth.login()
+        self.auth = auth
+        
+        scraper = WaterlooWorksScraper(auth.driver)
+        self.scraper = scraper
+        scraper.go_to_jobs_page()
+        
+        # Step 2: Process jobs in real-time
+        all_results = []
+        saved_count = 0
+        skipped_count = 0
+        total_jobs = 0
+        
+        try:
+            # Get pagination info
+            try:
+                num_pages = scraper.get_pagination_pages()
+                print(f"📄 Total pages to process: {num_pages}\n")
+            except Exception:
+                num_pages = 1
+                print("📄 Single page detected\n")
+            
+            print("=" * 70)
+            print("🔄 PROCESSING JOBS IN REAL-TIME")
+            print("=" * 70)
+            print()
+            
+            # Process each page
+            for page in range(1, num_pages + 1):
+                print(f"📄 Page {page}/{num_pages}")
+                print("-" * 70)
+                
+                rows = scraper.get_job_table()
+                
+                for i, row in enumerate(rows, 1):
+                    total_jobs += 1
+                    
+                    # Parse basic job info
+                    job_data = scraper.parse_job_row(row)
+                    if not job_data or not job_data.get('id'):
+                        continue
+                    
+                    # Show job being processed
+                    print(f"\n[Job {total_jobs}] {job_data.get('title', 'Unknown')} @ {job_data.get('company', 'N/A')}")
+                    print(f"           📍 {job_data.get('location', 'N/A')}")
+                    
+                    # Get detailed job info
+                    print(f"           🔍 Scraping details...", end=" ")
+                    job_data = scraper.get_job_details(job_data)
+                    print("✓")
+                    
+                    # Analyze match IMMEDIATELY
+                    print(f"           🧠 Analyzing match...", end=" ")
+                    result = self.matcher.analyze_single_job(job_data)
+                    print("✓")
+                    
+                    # Extract score
+                    match = result["match"]
+                    fit_score = match["fit_score"]
+                    
+                    # Show score with color coding
+                    if fit_score >= 70:
+                        emoji = "🟢"
+                    elif fit_score >= 50:
+                        emoji = "🟡"
+                    elif fit_score >= 30:
+                        emoji = "🟠"
+                    else:
+                        emoji = "🔴"
+                    
+                    print(f"           {emoji} FIT SCORE: {fit_score}/100")
+                    
+                    # Apply filters
+                    should_skip = False
+                    
+                    # Location filter
+                    if preferred_locations:
+                        job_location = job_data.get("location", "").lower()
+                        if not any(loc.lower() in job_location for loc in preferred_locations):
+                            print(f"           ⏭️  Skipped (location filter)")
+                            should_skip = True
+                    
+                    # Keyword filter
+                    if not should_skip and keywords:
+                        job_text_parts = []
+                        for field in ['title', 'summary', 'responsibilities', 'skills']:
+                            if job_data.get(field) and job_data[field] != 'N/A':
+                                job_text_parts.append(job_data[field])
+                        job_text = " ".join(job_text_parts).lower()
+                        
+                        if not any(kw.lower() in job_text for kw in keywords):
+                            print(f"           ⏭️  Skipped (keyword filter)")
+                            should_skip = True
+                    
+                    # Company filter
+                    if not should_skip and avoid_companies:
+                        company = job_data.get("company", "").lower()
+                        if any(avoid.lower() in company for avoid in avoid_companies):
+                            print(f"           ⏭️  Skipped (company filter)")
+                            should_skip = True
+                    
+                    # Save if meets threshold
+                    if not should_skip and fit_score >= auto_save_threshold and auto_save_to_folder:
+                        print(f"           💾 Saving to '{folder_name}' folder...", end=" ")
+                        
+                        # Re-add row_element for saving
+                        job_data["row_element"] = row
+                        success = scraper.save_job_to_folder(job_data, folder_name=folder_name)
+                        
+                        if success:
+                            print("✅ SAVED!")
+                            saved_count += 1
+                        else:
+                            print("❌ Failed")
+                            # Close panel if save failed
+                            scraper.close_job_details_panel()
+                        
+                        # Remove row_element after saving
+                        if "row_element" in job_data:
+                            del job_data["row_element"]
+                    elif not should_skip and fit_score < auto_save_threshold:
+                        print(f"           ⏭️  Not saved (score < {auto_save_threshold})")
+                        skipped_count += 1
+                        # Close the panel since we're not saving
+                        scraper.close_job_details_panel()
+                    else:
+                        skipped_count += 1
+                        # Close the panel since we're skipping
+                        scraper.close_job_details_panel()
+                    
+                    # Store result
+                    all_results.append(result)
+                
+                # Go to next page
+                if page < num_pages:
+                    print(f"\n➡️  Moving to page {page + 1}...")
+                    scraper.next_page()
+                    print()
+        
+        except KeyboardInterrupt:
+            print("\n\n⚠️  Process interrupted by user")
+        except Exception as e:
+            print(f"\n\n❌ Error during processing: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Step 3: Save results to files
+        print("\n" + "=" * 70)
+        print("💾 SAVING RESULTS TO FILES")
+        print("=" * 70)
+        
+        # Sort by fit score
+        all_results.sort(key=lambda x: x["match"]["fit_score"], reverse=True)
+        
+        self._save_results(all_results)
+        
+        # Step 4: Show final summary
+        print("\n" + "=" * 70)
+        print("📊 FINAL SUMMARY")
+        print("=" * 70)
+        print(f"Total jobs processed: {total_jobs}")
+        print(f"✅ Saved to WW folder: {saved_count}")
+        print(f"⏭️  Skipped/Low score: {skipped_count}")
+        print()
+        
+        self._show_summary(all_results[:10])  # Show top 10
+        
+        # Cleanup
+        if self.auth:
+            try:
+                self.auth.close()
+            except Exception:
+                pass
+        
+        return all_results
+    
+    def run_full_pipeline(self, detailed: bool = True, force_rematch: bool = False, auto_save_to_folder: bool = False) -> List[Dict]:
+        """
+        Run complete pipeline: scrape → match → filter → save (+ optional auto-save to WW folder)
         
         Args:
             detailed: Whether to scrape detailed job info (slower but better)
             force_rematch: If True, ignore cached matches and recalculate all
+            auto_save_to_folder: If True, automatically save high-scoring jobs to "geese" folder
         
         Returns:
             List of analyzed jobs sorted by fit score
@@ -61,13 +277,26 @@ class JobAnalyzer:
         filtered_results = self._apply_filters(results)
         print(f"✅ {len(filtered_results)} jobs after filtering\n")
         
-        # Step 4: Save results
-        print("💾 Step 4: Saving results...")
+        # Step 4: Auto-save high-scoring jobs to WaterlooWorks folder (optional)
+        if auto_save_to_folder and self.scraper:
+            print("📁 Step 4: Auto-saving high-scoring jobs to WaterlooWorks folder...")
+            self._auto_save_to_folder(filtered_results)
+            print()
+        
+        # Step 5: Save results locally
+        print("💾 Step 5: Saving results to local files...")
         self._save_results(filtered_results)
         print()
         
-        # Step 5: Show summary
+        # Step 6: Show summary
         self._show_summary(filtered_results)
+        
+        # Cleanup: Close browser if still open
+        if self.auth:
+            try:
+                self.auth.close()
+            except Exception:
+                pass
         
         return filtered_results
     
@@ -97,8 +326,12 @@ class JobAnalyzer:
             auth = WaterlooWorksAuth(username, password)
             auth.login()
             
+            # Store auth and scraper for later use (auto-save feature)
+            self.auth = auth
+            
             # Scrape with incremental saving
             scraper = WaterlooWorksScraper(auth.driver)
+            self.scraper = scraper  # Store for later use
             scraper.go_to_jobs_page()
             
             # Pass existing jobs and save callback
@@ -115,8 +348,8 @@ class JobAnalyzer:
                 save_every=5  # Save after every 5 new jobs (adjust as needed)
             )
             
-            # Close browser
-            auth.close()
+            # DON'T close browser yet if we need to auto-save to folder
+            # Browser will be closed at the end of the pipeline
             
             # Final normalization and save
             jobs = self._normalize_job_data(jobs)
@@ -189,6 +422,57 @@ class JobAnalyzer:
             filtered.append(result)
         
         return filtered
+    
+    def _auto_save_to_folder(self, results: List[Dict]):
+        """
+        Automatically save high-scoring jobs to WaterlooWorks folder
+        
+        Args:
+            results: List of analyzed job results
+        """
+        if not self.scraper:
+            print("  ⚠️  Scraper not available. Skipping auto-save.")
+            return
+        
+        # Get thresholds from config
+        auto_save_threshold = self.config.get("matcher", {}).get("auto_save_threshold", 50)
+        folder_name = self.config.get("waterlooworks_folder", "geese")
+        
+        # Find jobs that meet the threshold
+        jobs_to_save = [
+            r for r in results 
+            if r["match"]["fit_score"] >= auto_save_threshold
+        ]
+        
+        if not jobs_to_save:
+            print(f"  ℹ️  No jobs with fit score >= {auto_save_threshold}. Nothing to save.")
+            return
+        
+        print(f"  🎯 Found {len(jobs_to_save)} jobs with fit score >= {auto_save_threshold}")
+        print(f"  📁 Saving to WaterlooWorks folder: '{folder_name}'")
+        print()
+        
+        saved_count = 0
+        failed_count = 0
+        
+        for i, result in enumerate(jobs_to_save, 1):
+            job = result["job"]
+            score = result["match"]["fit_score"]
+            
+            print(f"  [{i}/{len(jobs_to_save)}] {job.get('title', 'Unknown')} - Score: {score}/100")
+            
+            success = self.scraper.save_job_to_folder(job, folder_name=folder_name)
+            
+            if success:
+                saved_count += 1
+            else:
+                failed_count += 1
+            
+            print()
+        
+        print(f"  ✅ Successfully saved: {saved_count}/{len(jobs_to_save)}")
+        if failed_count > 0:
+            print(f"  ❌ Failed to save: {failed_count}/{len(jobs_to_save)}")
     
     def _save_results(self, results: List[Dict]):
         """Save analyzed results to JSON and markdown"""
@@ -352,12 +636,25 @@ def main():
         action="store_true",
         help="Ignore cached matches and recalculate all job scores"
     )
+    parser.add_argument(
+        "--auto-save",
+        action="store_true",
+        help="Automatically save high-scoring jobs to WaterlooWorks 'geese' folder"
+    )
+    parser.add_argument(
+        "--realtime",
+        action="store_true",
+        help="Process jobs in real-time: scrape → analyze → save each job immediately"
+    )
     
     args = parser.parse_args()
     
     analyzer = JobAnalyzer()
     
-    if args.cached:
+    if args.realtime:
+        # Real-time processing mode
+        analyzer.run_realtime_pipeline(auto_save_to_folder=True)
+    elif args.cached:
         # Load cached jobs
         print("📂 Using cached jobs...")
         with open("data/jobs_scraped.json", 'r', encoding='utf-8') as f:
@@ -377,7 +674,11 @@ def main():
         analyzer._show_summary(filtered)
     else:
         # Run full pipeline
-        analyzer.run_full_pipeline(detailed=not args.quick, force_rematch=args.force_rematch)
+        analyzer.run_full_pipeline(
+            detailed=not args.quick, 
+            force_rematch=args.force_rematch,
+            auto_save_to_folder=args.auto_save
+        )
 
 
 if __name__ == "__main__":

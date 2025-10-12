@@ -580,6 +580,34 @@ class ResumeMatcher:
             return min(1.0, 0.5 + (leadership_count * 0.15))
         return 0.7
     
+    def analyze_single_job(self, job: Dict, use_cache: bool = True) -> Dict:
+        """
+        Analyze a single job and return result (used for real-time processing)
+        
+        Args:
+            job: Job dictionary to analyze
+            use_cache: If True, check cache first
+        
+        Returns:
+            Dictionary with job and match data
+        """
+        job_id = job.get('id', 'unknown')
+        
+        # Check cache first
+        if use_cache:
+            cached_match = self._get_cached_match(job_id)
+            if cached_match:
+                return {"job": job, "match": cached_match}
+        
+        # Calculate new match
+        match_result = self.analyze_match(job)
+        
+        # Cache the result
+        self._cache_match(job_id, match_result)
+        self._save_match_cache()  # Save immediately for real-time mode
+        
+        return {"job": job, "match": match_result}
+    
     def batch_analyze(self, jobs: List[Dict], force_rematch: bool = False) -> List[Dict]:
         """
         Analyze multiple jobs and return sorted by fit score

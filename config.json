@@ -16,6 +16,7 @@
     "similarity_threshold": 0.30,
     "top_k": 5,
     "min_match_score": 30,
+    "auto_save_threshold": 30,
     "penalty_per_missing_must_have": 0.05,
     
     "_comment_future_llm": "LLM settings for future cover letter generation",
@@ -30,7 +31,8 @@
     }
   },
   
-  "preferred_locations": ["Toronto", "Waterloo", "Remote", "Kitchener", "Ontario"],
+  "waterlooworks_folder": "geese",
+  "preferred_locations": [],
   "keywords_to_match": [],
   "companies_to_avoid": []
 }
