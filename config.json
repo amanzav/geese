@@ -1,18 +1,31 @@
 {
   "resume_path": "input/resume.pdf",
+  
+  "explicit_skills": {
+    "languages_frameworks": ["Python", "JavaScript", "TypeScript", "React", "FastAPI", "Flask", "Django", "C++", "Kotlin", "Java"],
+    "tools_technologies": ["PostgreSQL", "MongoDB", "DynamoDB", "Supabase", "Redis", "SQLite", "Prisma"],
+    "devops_cloud": ["AWS", "DynamoDB", "Lambda", "EC2", "S3", "Docker", "Git", "Jenkins", "GitHub Actions", "Vercel"]
+  },
+  
+  "_comment_future": "Below settings are placeholders for future features",
   "auto_apply_enabled": false,
   "max_applications_per_session": 10,
   
   "matcher": {
     "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
     "similarity_threshold": 0.30,
-    "top_k": 8,
+    "top_k": 5,
+    "min_match_score": 30,
+    "penalty_per_missing_must_have": 0.05,
+    
+    "_comment_future_llm": "LLM settings for future cover letter generation",
     "llm_provider": "gemini",
     "use_synonyms": false,
-    "min_match_score": 30,
+    
     "weights": {
-      "required_coverage": 0.60,
-      "skill_match": 0.25,
+      "keyword_match": 0.35,
+      "semantic_coverage": 0.40,
+      "semantic_strength": 0.10,
       "seniority_alignment": 0.15
     }
   },

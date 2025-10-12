@@ -16,10 +16,12 @@ class EmbeddingsManager:
         """Initialize embeddings manager with model and cache directory"""
         print(f"📦 Loading embedding model: {model_name}")
         self.model = SentenceTransformer(model_name)
+        self.model_name = model_name
         self.cache_dir = cache_dir
         self.index = None
         self.resume_bullets = []
-        self.dimension = 384
+        # Get dimension dynamically from model
+        self.dimension = self.model.get_sentence_embedding_dimension()
         os.makedirs(cache_dir, exist_ok=True)
     
     def encode(self, texts, normalize=True, show_progress=False):
@@ -78,7 +80,8 @@ class EmbeddingsManager:
         metadata = {
             "resume_bullets": self.resume_bullets,
             "dimension": self.dimension,
-            "num_vectors": len(self.resume_bullets)
+            "num_vectors": len(self.resume_bullets),
+            "model_name": self.model_name
         }
         
         with open(metadata_path, 'w', encoding='utf-8') as f:
@@ -98,15 +101,34 @@ class EmbeddingsManager:
         if not os.path.exists(metadata_path):
             raise FileNotFoundError(f"Metadata not found at {metadata_path}")
         
-        # Load FAISS index
-        self.index = faiss.read_index(index_path)
-        
         # Load metadata
         with open(metadata_path, 'r', encoding='utf-8') as f:
             metadata = json.load(f)
         
+        # Validate model compatibility
+        cached_model = metadata.get('model_name')
+        cached_dimension = metadata['dimension']
+        
+        if cached_model and cached_model != self.model_name:
+            raise ValueError(
+                f"⚠️  Model mismatch!\n"
+                f"   Cached index was built with: {cached_model}\n"
+                f"   Current model: {self.model_name}\n"
+                f"   Please rebuild the index or change config to use '{cached_model}'"
+            )
+        
+        if cached_dimension != self.dimension:
+            raise ValueError(
+                f"⚠️  Dimension mismatch!\n"
+                f"   Cached index dimension: {cached_dimension}\n"
+                f"   Current model dimension: {self.dimension}\n"
+                f"   Please rebuild the index with the current model"
+            )
+        
+        # Load FAISS index
+        self.index = faiss.read_index(index_path)
+        
         self.resume_bullets = metadata['resume_bullets']
-        self.dimension = metadata['dimension']
         
         print(f"📂 Loaded index with {self.index.ntotal} vectors")
         return True

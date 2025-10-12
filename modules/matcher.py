@@ -73,24 +73,27 @@ class ResumeMatcher:
         return self.match_cache.get(job_id)
     
     def _cache_match(self, job_id: str, match_result: Dict):
-        """Cache a match result for a job ID"""
+        """Cache a match result"""
         match_result["last_updated"] = datetime.now().isoformat()
         self.match_cache[job_id] = match_result
     
     def _load_resume(self) -> List[str]:
-        
-        # Load match cache
-        self.match_cache = self._load_match_cache()
-        print(f"📦 Loaded {len(self.match_cache)} cached job matches\n")
-    
-    def _load_resume(self) -> List[str]:
-        """Load resume from cached text file or PDF"""
+        """Load resume from cached text file or PDF, including skills section"""
         cached_path = "data/resume_parsed.txt"
         
         if os.path.exists(cached_path):
             print(f"📄 Loading resume from {cached_path}")
             with open(cached_path, 'r', encoding='utf-8') as f:
-                return [line.strip() for line in f if line.strip()]
+                bullets = [line.strip() for line in f if line.strip()]
+            
+            # Add explicit skills as pseudo-bullets for better matching
+            # This ensures technologies mentioned in skills section but not in bullets are indexed
+            skills_bullets = self._get_skills_bullets()
+            if skills_bullets:
+                print(f"📋 Adding {len(skills_bullets)} skill entries from skills section")
+                bullets.extend(skills_bullets)
+            
+            return bullets
         
         # Extract from PDF if no cache
         resume_path = self.config.get("resume_path", "input/resume.pdf")
@@ -100,12 +103,46 @@ class ResumeMatcher:
         print(f"📄 Extracting text from {resume_path}")
         bullets = self._extract_bullets_from_pdf(resume_path)
         
-        # Cache for future use
+        # Cache for future use (bullets only, skills added separately)
         os.makedirs("data", exist_ok=True)
         with open(cached_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(bullets))
         
+        # Add skills
+        skills_bullets = self._get_skills_bullets()
+        if skills_bullets:
+            print(f"📋 Adding {len(skills_bullets)} skill entries from skills section")
+            bullets.extend(skills_bullets)
+        
         return bullets
+    
+    def _get_skills_bullets(self) -> List[str]:
+        """
+        Generate pseudo-bullets from explicit skills section.
+        This ensures technologies in skills but not in experience bullets are still indexed.
+        """
+        # Read from config or hardcoded skills
+        skills_config = self.config.get("explicit_skills", {})
+        
+        if not skills_config:
+            # Fallback: try to extract from PDF or use default
+            return []
+        
+        skills_bullets = []
+        
+        # Convert skill categories into searchable bullets
+        for category, skills in skills_config.items():
+            if isinstance(skills, list):
+                # Create a bullet per skill for better granularity
+                for skill in skills:
+                    skills_bullets.append(f"Proficient in {skill}")
+            elif isinstance(skills, str):
+                # If it's a comma-separated string
+                skill_list = [s.strip() for s in skills.split(',')]
+                for skill in skill_list:
+                    skills_bullets.append(f"Proficient in {skill}")
+        
+        return skills_bullets
     
     def _extract_bullets_from_pdf(self, pdf_path: str) -> List[str]:
         """Extract bullet points from resume PDF"""
@@ -130,51 +167,310 @@ class ResumeMatcher:
         
         return bullets
     
-    def _parse_job_to_requirements(self, job: Dict) -> List[str]:
-        """Convert job data from scraper to requirement bullets"""
-        requirements = []
+    def _extract_technologies(self, text: str) -> set:
+        """Extract technology keywords from text using regex patterns"""
+        if not text:
+            return set()
         
-        if job.get("title"):
-            requirements.append(f"Experience in {job['title']} role")
+        import re
         
-        if job.get("required_skills"):
-            requirements.extend(skill.strip() for skill in job["required_skills"] if skill.strip())
-        
-        if job.get("additional_requirements"):
-            requirements.extend(req.strip() for req in job["additional_requirements"] if req.strip())
-        
-        # Fallback: combine all text fields if no structured data
-        if not requirements:
-            desc_parts = []
-            for field in ['summary', 'responsibilities', 'skills', 'employment_location_arrangement', 'work_term_duration', 'title']:
-                if job.get(field) and job[field] != 'N/A':
-                    desc_parts.append(job[field])
+        # Comprehensive tech keyword list with canonical names
+        # NOTE: Process in order - C++/C# before C to avoid false matches
+        tech_patterns = [
+            # Languages - Order matters!
+            ('C++', r'c\+\+'),  # No \b as it doesn't work with +
+            ('C#', r'c#'),  # No \b as it doesn't work with #
+            ('Python', r'\bpython\b'),
+            ('Java', r'\bjava\b(?!script)'),  # Java but not JavaScript
+            ('JavaScript', r'\bjavascript\b'),
+            ('TypeScript', r'\b(typescript|ts)\b'),
+            ('Go', r'\b(golang|go)\b'),
+            ('Rust', r'\brust\b'),
+            ('Kotlin', r'\bkotlin\b'),
+            ('Swift', r'\bswift\b'),
+            ('Ruby', r'\bruby\b'),
+            ('PHP', r'\bphp\b'),
+            ('Scala', r'\bscala\b'),
+            ('R', r'\b(r language|\br\s)'),
+            ('MATLAB', r'\bmatlab\b'),
+            # C last with explicit context keywords
+            ('C', r'\b(c language|c programming\b|c developer\b|(?<!\w)c\b(?=\s+(and|or|language|programming|developer|engineer|code)))'),
             
-            if desc_parts:
-                desc = "\n\n".join(desc_parts)
-                sentences = [s.strip() for s in desc.split('.') if 20 <= len(s.strip()) <= 200]
-                requirements = sentences[:10]
+            # Frontend Frameworks
+            ('React Native', r'\breact[\s-]native\b'),
+            ('React', r'\breact(\.js)?\b'),
+            ('Vue', r'\bvue(\.js)?\b'),
+            ('Angular', r'\bangular\b'),
+            ('Next.js', r'\bnext(\.js)?\b'),
+            ('Svelte', r'\bsvelte\b'),
+            ('jQuery', r'\bjquery\b'),
+            ('Bootstrap', r'\bbootstrap\b'),
+            ('Tailwind CSS', r'\btailwind( css)?\b'),
+            
+            # Backend Frameworks
+            ('Node.js', r'\bnode(\.js)?\b'),
+            ('Django', r'\bdjango\b'),
+            ('Flask', r'\bflask\b'),
+            ('FastAPI', r'\bfastapi\b'),
+            ('Spring', r'\bspring( boot| framework)?\b'),
+            ('Express', r'\bexpress(\.js)?\b'),
+            ('NestJS', r'\bnest(\.js)?\b'),
+            ('Rails', r'\bruby on rails|rails\b'),
+            
+            # Mobile
+            ('Flutter', r'\bflutter\b'),
+            ('iOS', r'\bios\b'),
+            ('Android', r'\bandroid\b'),
+            
+            # Cloud & DevOps
+            ('AWS', r'\baws|amazon web services\b'),
+            ('Azure', r'\bazure|microsoft azure\b'),
+            ('GCP', r'\bgcp|google cloud\b'),
+            ('Lambda', r'\b(aws )?lambda\b'),
+            ('S3', r'\bs3\b'),
+            ('EC2', r'\bec2\b'),
+            ('Kubernetes', r'\bkubernetes|k8s\b'),
+            ('Docker', r'\bdocker\b'),
+            ('Terraform', r'\bterraform\b'),
+            ('Ansible', r'\bansible\b'),
+            ('Jenkins', r'\bjenkins\b'),
+            ('CI/CD', r'\bci/cd|ci\/cd\b'),
+            ('GitHub Actions', r'\bgithub actions\b'),
+            ('GitLab', r'\bgitlab( ci)?\b'),
+            ('CircleCI', r'\bcircleci\b'),
+            
+            # Databases
+            ('PostgreSQL', r'\bpostgresql|postgres\b'),
+            ('MySQL', r'\bmysql\b'),
+            ('MongoDB', r'\bmongodb|mongo\b'),
+            ('Redis', r'\bredis\b'),
+            ('DynamoDB', r'\bdynamodb\b'),
+            ('Cassandra', r'\bcassandra\b'),
+            ('Elasticsearch', r'\belasticsearch|elastic search\b'),
+            ('SQL', r'\bsql\b'),
+            ('NoSQL', r'\bnosql\b'),
+            ('SQLite', r'\bsqlite\b'),
+            
+            # ML/AI
+            ('TensorFlow', r'\btensorflow\b'),
+            ('PyTorch', r'\bpytorch\b'),
+            ('Keras', r'\bkeras\b'),
+            ('Scikit-learn', r'\bscikit-learn|sklearn\b'),
+            ('LangChain', r'\blangchain\b'),
+            ('LLM', r'\bllm|large language model\b'),
+            ('Transformers', r'\btransformers\b'),
+            ('OpenAI', r'\bopenai\b'),
+            ('Hugging Face', r'\bhugging ?face\b'),
+            ('BERT', r'\bbert\b'),
+            ('GPT', r'\bgpt\b'),
+            ('Machine Learning', r'\bmachine learning|ml\b'),
+            ('Deep Learning', r'\bdeep learning\b'),
+            ('NLP', r'\bnlp|natural language processing\b'),
+            
+            # Data
+            ('Pandas', r'\bpandas\b'),
+            ('NumPy', r'\bnumpy\b'),
+            ('Spark', r'\bspark|apache spark\b'),
+            ('Airflow', r'\bairflow\b'),
+            ('Kafka', r'\bkafka|apache kafka\b'),
+            ('Hadoop', r'\bhadoop\b'),
+            ('Tableau', r'\btableau\b'),
+            ('Power BI', r'\bpower ?bi\b'),
+            
+            # Tools & Others
+            ('Git', r'\bgit\b'),
+            ('Linux', r'\blinux\b'),
+            ('Bash', r'\bbash\b'),
+            ('Unix', r'\bunix\b'),
+            ('Agile', r'\bagile\b'),
+            ('Scrum', r'\bscrum\b'),
+            ('REST API', r'\brest(ful)? api\b'),
+            ('GraphQL', r'\bgraphql\b'),
+            ('gRPC', r'\bgrpc\b'),
+            ('WebSocket', r'\bwebsocket\b'),
+            ('MQTT', r'\bmqtt\b'),
+            ('Selenium', r'\bselenium\b'),
+            ('Pytest', r'\bpytest\b'),
+            ('Jest', r'\bjest\b'),
+            ('JUnit', r'\bjunit\b')
+        ]
+        
+        text_lower = text.lower()
+        found_techs = set()
+        
+        # Process patterns in order
+        for canonical_name, pattern in tech_patterns:
+            if re.search(pattern, text_lower, re.IGNORECASE):
+                found_techs.add(canonical_name)
+        
+        return found_techs
+    
+    def _parse_job_to_requirements(self, job: Dict) -> Dict[str, List[str]]:
+        """Extract structured requirements from job with priority levels"""
+        requirements = {
+            "must_have_skills": [],
+            "nice_to_have_skills": [],
+            "responsibilities": [],
+            "all_requirements": []  # For semantic search
+        }
+        
+        # Common generic phrases to skip (pure fluff with no semantic value)
+        SKIP_PHRASES = [
+            "strong communication", "excellent communication", "good communication",
+            "team player", "strong work ethic", "attention to detail",
+            "problem solving", "time management", "organizational skills",
+            "interpersonal skills", "written communication", "verbal communication",
+            "strong motivation", "self-motivated", "quick learner",
+            "quality and achieving deadlines", "commitment to quality",
+            "strong technical writing", "technical writing skills",
+            "work independently", "work in a team", "fast-paced environment"
+        ]
+        
+        def is_meaningful_requirement(text: str) -> bool:
+            """Check if requirement is meaningful (not generic fluff)"""
+            text_lower = text.lower()
+            
+            # Skip if contains generic phrases
+            if any(phrase in text_lower for phrase in SKIP_PHRASES):
+                return False
+            
+            # Skip if it's just "Experience in [role] role" (redundant)
+            if text_lower.startswith("experience in") and "role" in text_lower:
+                return False
+            
+            # Must contain at least one technical keyword or be action-oriented
+            has_tech = any(tech in text_lower for tech in [
+                "python", "java", "c++", "javascript", "react", "sql", "api",
+                "develop", "build", "design", "implement", "architect", "deploy",
+                "debug", "test", "optimize", "integrate", "maintain", "engineer",
+                "database", "cloud", "aws", "azure", "docker", "kubernetes",
+                "git", "agile", "scrum", "linux", "windows", "web", "mobile"
+            ])
+            
+            return has_tech
+        
+        # Extract from skills section
+        skills_text = job.get("skills", "")
+        if skills_text and skills_text != "N/A":
+            # Split by newlines and filter meaningful lines
+            for line in skills_text.split('\n'):
+                line = line.strip()
+                
+                # Skip headers, very short lines, and bullets
+                if (len(line) < 15 or 
+                    line.endswith(':') or
+                    line.lower().startswith(('required', 'preferred', 'qualifications', 'skills', 'what we'))):
+                    continue
+                
+                # Remove leading bullet symbols
+                for symbol in ['•', '●', '◦', '▪', '-', '*', '–']:
+                    if line.startswith(symbol):
+                        line = line[1:].strip()
+                        break
+                
+                if len(line) < 15:  # Recheck after removing bullet
+                    continue
+                
+                # Skip if not meaningful
+                if not is_meaningful_requirement(line):
+                    continue
+                
+                line_lower = line.lower()
+                
+                # Nice-to-have indicators (prioritize these first)
+                if any(kw in line_lower for kw in [
+                    "nice to have", "nice-to-have", "bonus", "preferred", 
+                    "plus", "asset", "would be", "a plus"
+                ]):
+                    requirements["nice_to_have_skills"].append(line)
+                # Must-have indicators or general skills
+                else:
+                    requirements["must_have_skills"].append(line)
+        
+        # Extract from responsibilities
+        resp_text = job.get("responsibilities", "")
+        if resp_text and resp_text != "N/A":
+            for line in resp_text.split('\n'):
+                line = line.strip()
+                
+                # Skip headers
+                if (line.endswith(':') or 
+                    line.lower().startswith(('responsibilities', 'what you', 'you will', 'duties'))):
+                    continue
+                
+                # Remove bullets
+                for symbol in ['•', '●', '◦', '▪', '-', '*', '–']:
+                    if line.startswith(symbol):
+                        line = line[1:].strip()
+                        break
+                
+                if len(line) > 20 and is_meaningful_requirement(line):
+                    requirements["responsibilities"].append(line)
+        
+        # Extract key sentences from summary
+        summary_text = job.get("summary", "")
+        if summary_text and summary_text != "N/A":
+            # Split into sentences
+            sentences = []
+            for sent in summary_text.replace('!', '.').replace('?', '.').split('.'):
+                sent = sent.strip()
+                # Look for action-oriented sentences with keywords
+                if (len(sent) > 30 and is_meaningful_requirement(sent) and
+                    any(kw in sent.lower() for kw in [
+                        'will', 'looking for', 'seeking', 'experience', 
+                        'work', 'build', 'develop', 'design', 'create'
+                    ])):
+                    sentences.append(sent)
+            
+            requirements["responsibilities"].extend(sentences[:3])
+        
+        # Combine all for semantic search (prioritize must-haves)
+        requirements["all_requirements"] = (
+            requirements["must_have_skills"][:10] +   # Top 10 must-haves
+            requirements["responsibilities"][:5] +    # Top 5 responsibilities  
+            requirements["nice_to_have_skills"][:3]   # Top 3 nice-to-haves
+        )
         
         return requirements
     
     def analyze_match(self, job: Dict) -> Dict:
-        """Analyze how well resume matches a job"""
+        """Analyze how well resume matches a job using hybrid approach"""
         requirements = self._parse_job_to_requirements(job)
         
-        if not requirements:
+        if not requirements["all_requirements"]:
             return {
                 "fit_score": 0,
                 "matched_bullets": [],
                 "coverage": 0,
                 "skill_match": 0,
+                "keyword_match": 0,
                 "seniority_alignment": 50,
+                "matched_technologies": [],
+                "missing_technologies": [],
                 "error": "No requirements found in job"
             }
         
-        # Search for matching resume bullets
-        top_k = self.matcher_config.get("top_k", 8)
-        threshold = self.matcher_config.get("similarity_threshold", 0.50)
-        results = self.embeddings.search(requirements, k=top_k)
+        # 1. KEYWORD MATCHING (Explicit technology match)
+        job_text = " ".join([
+            job.get('summary', ''),
+            job.get('responsibilities', ''),
+            job.get('skills', '')
+        ])
+        job_techs = self._extract_technologies(job_text)
+        
+        resume_text = " ".join(self.resume_bullets)
+        resume_techs = self._extract_technologies(resume_text)
+        
+        # Calculate keyword overlap
+        matched_techs = job_techs & resume_techs
+        keyword_overlap = len(matched_techs) / len(job_techs) if job_techs else 0
+        
+        # 2. SEMANTIC SEARCH (Contextual understanding)
+        top_k = self.matcher_config.get("top_k", 5)
+        threshold = self.matcher_config.get("similarity_threshold", 0.30)  # Tuned for technical text matching
+        
+        # Search with all requirements
+        results = self.embeddings.search(requirements["all_requirements"], k=top_k)
         
         # Collect unique matched bullets
         matched_bullets_map = {}
@@ -189,18 +485,40 @@ class ResumeMatcher:
                         similarity
                     )
         
-        # Calculate scores
-        coverage = self._calculate_coverage(results, threshold)
-        skill_match = self._calculate_skill_match(matched_bullets_map, threshold)
+        # Calculate semantic scores
+        semantic_coverage = self._calculate_coverage(results, threshold)
+        semantic_strength = self._calculate_skill_match(matched_bullets_map, threshold)
         seniority = self._calculate_seniority_alignment(job, matched_bullets_map)
         
-        # Weighted fit score
+        # 3. MUST-HAVE PENALTY
+        # Check how many must-have skills are not found in resume
+        must_haves = requirements["must_have_skills"]
+        missing_must_haves = 0
+        
+        if must_haves:
+            # Search for must-haves specifically
+            must_have_results = self.embeddings.search(must_haves, k=top_k)
+            for req_matches in must_have_results:
+                # If no match above threshold, it's missing
+                if not any(m["similarity"] >= threshold for m in req_matches):
+                    missing_must_haves += 1
+        
+        # Apply penalty: 5% per missing must-have skill
+        penalty_per_missing = self.matcher_config.get("penalty_per_missing_must_have", 0.05)
+        must_have_penalty = missing_must_haves * penalty_per_missing
+        
+        # 4. HYBRID WEIGHTED SCORE
+        # Balance between explicit tech match and contextual fit
         weights = self.matcher_config.get("weights", {})
         fit_score = (
-            weights.get("required_coverage", 0.60) * coverage +
-            weights.get("skill_match", 0.25) * skill_match +
-            weights.get("seniority_alignment", 0.15) * seniority
+            weights.get("keyword_match", 0.35) * keyword_overlap +      # 35% explicit tech
+            weights.get("semantic_coverage", 0.40) * semantic_coverage + # 40% requirement coverage
+            weights.get("semantic_strength", 0.10) * semantic_strength + # 10% match quality
+            weights.get("seniority_alignment", 0.15) * seniority         # 15% experience level
         ) * 100
+        
+        # Apply must-have penalty
+        fit_score = max(0, fit_score - (must_have_penalty * 100))
         
         return {
             "fit_score": round(fit_score, 1),
@@ -208,10 +526,17 @@ class ResumeMatcher:
                 {"text": text, "similarity": round(sim, 3)}
                 for text, sim in sorted(matched_bullets_map.items(), key=lambda x: x[1], reverse=True)
             ],
-            "coverage": round(coverage * 100, 1),
-            "skill_match": round(skill_match * 100, 1),
+            "coverage": round(semantic_coverage * 100, 1),
+            "skill_match": round(semantic_strength * 100, 1),
+            "keyword_match": round(keyword_overlap * 100, 1),
             "seniority_alignment": round(seniority * 100, 1),
-            "requirements_analyzed": len(requirements)
+            "requirements_analyzed": len(requirements["all_requirements"]),
+            "must_have_skills": len(must_haves),
+            "missing_must_haves": missing_must_haves,
+            "must_have_penalty": round(must_have_penalty * 100, 1),
+            "matched_technologies": sorted(list(matched_techs)),
+            "missing_technologies": sorted(list(job_techs - resume_techs)),
+            "total_technologies_required": len(job_techs)
         }
     
     def _calculate_coverage(self, search_results: List[List[Dict]], threshold: float) -> float:

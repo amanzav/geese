@@ -245,9 +245,19 @@ class JobAnalyzer:
                 
                 # Match breakdown
                 f.write(f"**Match Breakdown:**\n")
-                f.write(f"- Coverage: {match['coverage']}%\n")
-                f.write(f"- Skill Match: {match['skill_match']}%\n")
+                f.write(f"- Keyword Match: {match.get('keyword_match', 0)}%\n")
+                f.write(f"- Semantic Coverage: {match['coverage']}%\n")
+                f.write(f"- Semantic Strength: {match['skill_match']}%\n")
                 f.write(f"- Seniority Alignment: {match['seniority_alignment']}%\n\n")
+                
+                # Technology matching
+                if match.get("matched_technologies"):
+                    f.write(f"**✅ Matched Technologies ({len(match['matched_technologies'])}):**\n")
+                    f.write(", ".join(match["matched_technologies"]) + "\n\n")
+                
+                if match.get("missing_technologies"):
+                    f.write(f"**❌ Missing Technologies ({len(match['missing_technologies'])}):**\n")
+                    f.write(", ".join(match["missing_technologies"]) + "\n\n")
                 
                 # Matched bullets
                 if match.get("matched_bullets"):
@@ -304,7 +314,13 @@ class JobAnalyzer:
             print(f"{emoji} #{i} - Fit Score: {match['fit_score']}/100")
             print(f"   📋 {job.get('title', 'Unknown')} at {job.get('company', 'N/A')}")
             print(f"   📍 {job.get('location', 'N/A')}")
-            print(f"   📈 Coverage: {match['coverage']}% | Skills: {match['skill_match']}% | Seniority: {match['seniority_alignment']}%")
+            print(f"   📈 Keyword: {match.get('keyword_match', 0)}% | Semantic: {match['coverage']}% | Seniority: {match['seniority_alignment']}%")
+            
+            # Show matched tech (if any)
+            if match.get("matched_technologies"):
+                tech_list = match["matched_technologies"][:5]  # Top 5
+                print(f"   ✅ Tech Match: {', '.join(tech_list)}")
+            
             print()
         
         if len(results) > 10:
