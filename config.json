@@ -1,0 +1,23 @@
+{
+  "resume_path": "input/resume.pdf",
+  "auto_apply_enabled": false,
+  "max_applications_per_session": 10,
+  
+  "matcher": {
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "similarity_threshold": 0.30,
+    "top_k": 8,
+    "llm_provider": "gemini",
+    "use_synonyms": false,
+    "min_match_score": 70,
+    "weights": {
+      "required_coverage": 0.60,
+      "skill_match": 0.25,
+      "seniority_alignment": 0.15
+    }
+  },
+  
+  "preferred_locations": ["Toronto", "Remote", "Waterloo", "Kitchener"],
+  "keywords_to_match": ["Python", "AI", "ML", "Full Stack", "React", "Node.js"],
+  "companies_to_avoid": []
+}

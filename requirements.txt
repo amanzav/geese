@@ -4,7 +4,14 @@ selenium>=4.15.0
 # Environment management
 python-dotenv>=1.0.0
 
+# Resume matcher dependencies
+sentence-transformers==3.0.1
+faiss-cpu==1.8.0.post1
+numpy==1.26.4
+pypdf==5.0.1
+google-generativeai==0.8.2
+
 # Future dependencies (add when needed):
 # rich>=13.7.0          # For beautiful CLI
-# openai>=1.3.0         # For LLM integration
-# PyPDF2>=3.0.0         # For PDF parsing
+# torch>=2.1.0          # For optional reranking
+# transformers>=4.42.3  # For optional reranking
