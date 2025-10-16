@@ -8,6 +8,10 @@ import os
 import getpass
 from datetime import datetime
 from typing import List, Dict
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 from modules.auth import WaterlooWorksAuth
 from modules.scraper import WaterlooWorksScraper
@@ -624,14 +628,15 @@ def main():
     
     parser = argparse.ArgumentParser(description="Analyze WaterlooWorks jobs")
     parser.add_argument(
+        "--mode",
+        choices=["realtime", "batch", "analyze", "cover-letter", "upload-covers"],
+        default="batch",
+        help="Operation mode: realtime (scrape+analyze live), batch (scrape then analyze), analyze (cached only), cover-letter (generate covers for Geese jobs), upload-covers (upload all covers to WW)"
+    )
+    parser.add_argument(
         "--quick",
         action="store_true",
         help="Quick mode (basic scraping, faster)"
-    )
-    parser.add_argument(
-        "--cached",
-        action="store_true",
-        help="Use cached jobs instead of scraping"
     )
     parser.add_argument(
         "--force-rematch",
@@ -641,23 +646,19 @@ def main():
     parser.add_argument(
         "--auto-save",
         action="store_true",
-        help="Automatically save high-scoring jobs to WaterlooWorks 'geese' folder"
-    )
-    parser.add_argument(
-        "--realtime",
-        action="store_true",
-        help="Process jobs in real-time: scrape → analyze → save each job immediately"
+        help="Automatically save high-scoring jobs to WaterlooWorks folder"
     )
     
     args = parser.parse_args()
     
     analyzer = JobAnalyzer()
     
-    if args.realtime:
+    if args.mode == "realtime":
         # Real-time processing mode
         analyzer.run_realtime_pipeline(auto_save_to_folder=True)
-    elif args.cached:
-        # Load cached jobs
+    
+    elif args.mode == "analyze":
+        # Load cached jobs and analyze
         print("📂 Using cached jobs...")
         with open("data/jobs_scraped.json", 'r', encoding='utf-8') as f:
             jobs = json.load(f)
@@ -674,7 +675,126 @@ def main():
         filtered = analyzer._apply_filters(results)
         analyzer._save_results(filtered)
         analyzer._show_summary(filtered)
-    else:
+    
+    elif args.mode == "cover-letter":
+        # Generate cover letters for Geese Jobs
+        print("=" * 70)
+        print("📝 COVER LETTER GENERATOR")
+        print("=" * 70)
+        print()
+        
+        # Login with credentials from .env
+        print("🔐 Logging into WaterlooWorks...")
+        username = os.getenv("WATERLOOWORKS_USERNAME")
+        password = os.getenv("WATERLOOWORKS_PASSWORD")
+        
+        if not username or not password:
+            print("❌ Error: Credentials not found in .env file")
+            print("   Please set WATERLOOWORKS_USERNAME and WATERLOOWORKS_PASSWORD")
+            return
+        
+        print(f"   Using credentials from .env: {username}")
+        print()
+        
+        auth = WaterlooWorksAuth(username, password)
+        auth.login()
+        
+        # Get resume and prompt from config
+        resume_path = analyzer.config.get("resume_path", "input/resume.pdf")
+        cover_config = analyzer.config.get("cover_letter", {})
+        template_path = cover_config.get("template_path", "template.docx")
+        cached_jobs_path = cover_config.get("cached_jobs_path", "data/jobs_sample.json")
+        prompt_template = cover_config.get("prompt_template", "Write a professional cover letter.")
+        
+        # Load resume text
+        resume_text = ""
+        
+        # Try to load resume from different sources
+        if os.path.exists(resume_path):
+            # Load from PDF
+            from pypdf import PdfReader
+            reader = PdfReader(resume_path)
+            resume_text = "".join(page.extract_text() for page in reader.pages)
+            print(f"✓ Loaded resume from PDF: {resume_path}")
+        elif os.path.exists("data/resume_parsed.txt"):
+            # Fallback to parsed text
+            with open("data/resume_parsed.txt", 'r', encoding='utf-8') as f:
+                resume_text = f.read()
+            print(f"✓ Loaded resume from text: data/resume_parsed.txt")
+        else:
+            print("❌ Error: Resume not found!")
+            print(f"   Expected: {resume_path} OR data/resume_parsed.txt")
+            print("   Please add your resume to one of these locations.")
+            return
+        
+        # Initialize generator
+        from modules.cover_letter_generator import CoverLetterGenerator
+        generator = CoverLetterGenerator(
+            auth.driver, 
+            resume_text, 
+            prompt_template,
+            api_key=os.getenv("GEMINI_API_KEY")
+        )
+        
+        # Generate all cover letters
+        stats = generator.generate_all_cover_letters(cached_jobs_path)
+        
+        # Cleanup
+        auth.driver.quit()
+        
+        # Show summary
+        print("\n" + "=" * 70)
+        print("📊 COVER LETTER GENERATION SUMMARY")
+        print("=" * 70)
+        print(f"Total Jobs: {stats['total_jobs']}")
+        print(f"✅ Generated: {stats['generated']}")
+        print(f"⏭  Skipped (already exists): {stats['skipped_existing']}")
+        print(f"❌ Failed: {stats['failed']}")
+        print("=" * 70)
+    
+    elif args.mode == "upload-covers":
+        # Upload cover letters to WaterlooWorks
+        print("=" * 70)
+        print("📤 COVER LETTER UPLOADER")
+        print("=" * 70)
+        print()
+        
+        # Login with credentials from .env
+        print("🔐 Logging into WaterlooWorks...")
+        username = os.getenv("WATERLOOWORKS_USERNAME")
+        password = os.getenv("WATERLOOWORKS_PASSWORD")
+        
+        if not username or not password:
+            print("❌ Error: Credentials not found in .env file")
+            print("   Please set WATERLOOWORKS_USERNAME and WATERLOOWORKS_PASSWORD")
+            return
+        
+        print(f"   Using credentials from .env: {username}")
+        print()
+        
+        auth = WaterlooWorksAuth(username, password)
+        auth.login()
+        
+        # Initialize uploader
+        from modules.cover_letter_generator import CoverLetterUploader
+        uploader = CoverLetterUploader(auth.driver)
+        
+        # Upload all covers
+        stats = uploader.upload_all_cover_letters()
+        
+        # Cleanup
+        auth.driver.quit()
+        
+        # Show summary
+        print("\n" + "=" * 70)
+        print("📊 UPLOAD SUMMARY")
+        print("=" * 70)
+        print(f"Total Files: {stats['total_files']}")
+        print(f"✅ Uploaded: {stats['uploaded']}")
+        print(f"❌ Failed: {stats['failed']}")
+        print("=" * 70)
+    
+    else:  # batch mode
         # Run full pipeline
         analyzer.run_full_pipeline(
             detailed=not args.quick, 

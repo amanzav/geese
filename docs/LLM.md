@@ -345,7 +345,7 @@ class LLMClient:
         self.provider = provider
         if provider == 'gemini':
             genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
-            self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+            self.model = genai.GenerativeModel('gemini-2.0-flash-lite')
     
     def generate_analysis(self, job_data, matches, scores):
         prompt = self._build_prompt(job_data, matches, scores)

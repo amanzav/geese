@@ -167,8 +167,10 @@ class WaterlooWorksScraper:
                 "additional_info": "N/A",
                 "employment_location_arrangement": "N/A",
                 "work_term_duration": "N/A",
-                "compensation_and_benefits_raw": "N/A",
             }
+            
+            # Store compensation text separately (not in final output)
+            compensation_raw = "N/A"
 
             for div in job_divs:
                 text = div.get_attribute("innerText").strip()
@@ -193,12 +195,12 @@ class WaterlooWorksScraper:
                         "Work Term Duration:", "", 1
                     ).strip()
                 elif text.startswith("Compensation and Benefits:"):
-                    sections["compensation_and_benefits_raw"] = text.replace(
+                    compensation_raw = text.replace(
                         "Compensation and Benefits:", "", 1
                     ).strip()
 
             # Extract compensation using LLM
-            if sections["compensation_and_benefits_raw"] != "N/A":
+            if compensation_raw != "N/A":
                 try:
                     # Lazy initialize compensation extractor
                     if self.compensation_extractor is None:
@@ -207,7 +209,7 @@ class WaterlooWorksScraper:
                         )
                     
                     comp_data = self.compensation_extractor.extract_compensation(
-                        sections["compensation_and_benefits_raw"]
+                        compensation_raw
                     )
                     sections["compensation"] = comp_data
                 except Exception as e:
@@ -215,7 +217,7 @@ class WaterlooWorksScraper:
                     sections["compensation"] = {
                         "value": None,
                         "currency": None,
-                        "original_text": sections["compensation_and_benefits_raw"],
+                        "original_text": compensation_raw,
                         "time_period": None
                     }
             else:

@@ -31,6 +31,12 @@
     }
   },
   
+  "cover_letter": {
+    "template_path": "template.docx",
+    "cached_jobs_path": "data/jobs_scraped.json",
+    "prompt_template": "You are an expert cover letter writer. Write a professional, enthusiastic cover letter that highlights relevant skills and experience. Keep it between 100-400 words. Format it properly with paragraphs."
+  },
+  
   "waterlooworks_folder": "geese",
   "preferred_locations": [],
   "keywords_to_match": [],

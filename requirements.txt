@@ -11,6 +11,12 @@ numpy==1.26.4
 pypdf==5.0.1
 google-generativeai==0.8.2
 
+# Cover letter generation
+python-docx>=1.1.0
+docx2pdf>=0.1.8
+pywin32>=306  # For pythoncom (Windows only)
+pyperclip>=1.8.2
+
 # Future dependencies (add when needed):
 # rich>=13.7.0          # For beautiful CLI
 # torch>=2.1.0          # For optional reranking
