@@ -23,7 +23,7 @@ from .utils import TIMEOUT, PAGE_LOAD
 class CoverLetterGenerator:
     """Generate and manage cover letters for job applications"""
 
-    def __init__(self, driver, resume_text, prompt_template, api_key=None):
+    def __init__(self, driver, resume_text, prompt_template, api_key=None, cover_letters_folder="cover_letters"):
         """
         Initialize cover letter generator
         
@@ -32,11 +32,12 @@ class CoverLetterGenerator:
             resume_text: User's resume text for context
             prompt_template: Template for LLM prompt
             api_key: Google API key for Gemini
+            cover_letters_folder: Folder to save cover letters (default: "cover_letters")
         """
         self.driver = driver
         self.resume_text = resume_text
         self.prompt_template = prompt_template
-        self.cover_letters_dir = Path("cover_letters")
+        self.cover_letters_dir = Path(cover_letters_folder)
         self.cover_letters_dir.mkdir(exist_ok=True)
         
         # Configure Gemini
@@ -57,9 +58,37 @@ class CoverLetterGenerator:
         Returns:
             Sanitized filename without extension
         """
-        # Remove special characters and replace spaces
-        company_clean = re.sub(r'[^\w\s-]', '', company).strip().replace(' ', '_')
-        title_clean = re.sub(r'[^\w\s-]', '', job_title).strip().replace(' ', '_')
+        # Windows doesn't allow: < > : " / \ | ? * and control characters (0-31)
+        # Also remove brackets, parentheses, and other problematic characters
+        def sanitize(text):
+            # Remove or replace problematic characters
+            text = text.replace('/', '_')
+            text = text.replace('\\', '_')
+            text = text.replace(':', '_')
+            text = text.replace('*', '_')
+            text = text.replace('?', '_')
+            text = text.replace('"', '')
+            text = text.replace('<', '')
+            text = text.replace('>', '')
+            text = text.replace('|', '_')
+            text = text.replace('(', '')
+            text = text.replace(')', '')
+            text = text.replace('[', '')
+            text = text.replace(']', '')
+            text = text.replace('{', '')
+            text = text.replace('}', '')
+            # Remove any other non-alphanumeric except spaces, hyphens, underscores
+            text = re.sub(r'[^\w\s-]', '', text)
+            # Replace multiple spaces with single space
+            text = re.sub(r'\s+', ' ', text)
+            # Replace spaces with underscores
+            text = text.strip().replace(' ', '_')
+            # Remove multiple underscores
+            text = re.sub(r'_+', '_', text)
+            return text.strip('_')
+        
+        company_clean = sanitize(company)
+        title_clean = sanitize(job_title)
         return f"{company_clean}_{title_clean}"
     
     def cover_letter_exists(self, company, job_title):
@@ -531,15 +560,16 @@ Aman Zaveri"""
 class CoverLetterUploader:
     """Upload cover letters to WaterlooWorks"""
     
-    def __init__(self, driver):
+    def __init__(self, driver, cover_letters_folder="cover_letters"):
         """
         Initialize uploader
         
         Args:
             driver: Selenium WebDriver instance
+            cover_letters_folder: Folder containing cover letters (default: "cover_letters")
         """
         self.driver = driver
-        self.cover_letters_dir = Path("cover_letters")
+        self.cover_letters_dir = Path(cover_letters_folder)
     
     def navigate_to_upload_menu(self):
         """Navigate to document upload page"""
@@ -635,9 +665,50 @@ class CoverLetterUploader:
             print(f"      ✗ Error uploading {pdf_filename}: {e}")
             return False
     
+    def get_uploaded_files_log(self):
+        """
+        Get the log file tracking already uploaded files
+        
+        Returns:
+            Path to the log file
+        """
+        return Path("data") / "uploaded_cover_letters.json"
+    
+    def load_uploaded_files(self):
+        """
+        Load the list of already uploaded files
+        
+        Returns:
+            Set of uploaded filenames
+        """
+        log_file = self.get_uploaded_files_log()
+        if log_file.exists():
+            with open(log_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return set(data.get("uploaded_files", []))
+        return set()
+    
+    def save_uploaded_file(self, filename):
+        """
+        Mark a file as uploaded
+        
+        Args:
+            filename: Name of the uploaded file
+        """
+        log_file = self.get_uploaded_files_log()
+        log_file.parent.mkdir(exist_ok=True)
+        
+        # Load existing
+        uploaded = self.load_uploaded_files()
+        uploaded.add(filename)
+        
+        # Save updated list
+        with open(log_file, 'w', encoding='utf-8') as f:
+            json.dump({"uploaded_files": sorted(list(uploaded))}, f, indent=2)
+    
     def upload_all_cover_letters(self):
         """
-        Upload all PDF files in the cover_letters directory
+        Upload all PDF files in the cover_letters directory that haven't been uploaded yet
         
         Returns:
             Dictionary with statistics
@@ -645,6 +716,7 @@ class CoverLetterUploader:
         stats = {
             "total_files": 0,
             "uploaded": 0,
+            "skipped_existing": 0,
             "failed": 0
         }
         
@@ -656,21 +728,37 @@ class CoverLetterUploader:
             print("No cover letters found to upload")
             return stats
         
-        print(f"\n📤 Found {len(pdf_files)} cover letters to upload")
+        # Load already uploaded files
+        uploaded_files = self.load_uploaded_files()
+        
+        # Filter out already uploaded files
+        files_to_upload = [f for f in pdf_files if f.name not in uploaded_files]
+        stats["skipped_existing"] = len(pdf_files) - len(files_to_upload)
+        
+        print(f"\n📤 Found {len(pdf_files)} total cover letters")
+        if stats["skipped_existing"] > 0:
+            print(f"   ⏭️  Skipping {stats['skipped_existing']} already uploaded")
+        print(f"   📤 Uploading {len(files_to_upload)} new files")
+        
+        if not files_to_upload:
+            print("\n✅ All cover letters already uploaded!")
+            return stats
         
         # Navigate to upload menu once
         if not self.navigate_to_upload_menu():
             return stats
         
         # Upload each file
-        for idx, pdf_path in enumerate(pdf_files, 1):
-            print(f"\n[{idx}/{len(pdf_files)}] Uploading {pdf_path.name}...")
+        for idx, pdf_path in enumerate(files_to_upload, 1):
+            print(f"\n[{idx}/{len(files_to_upload)}] Uploading {pdf_path.name}...")
             
             if self.upload_file(pdf_path.name):
                 stats["uploaded"] += 1
+                # Mark as uploaded
+                self.save_uploaded_file(pdf_path.name)
                 
                 # Navigate back to upload page for next file (except last one)
-                if idx < len(pdf_files):
+                if idx < len(files_to_upload):
                     if not self.navigate_to_upload_menu():
                         break
             else:
