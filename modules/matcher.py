@@ -4,117 +4,177 @@ Resume Matcher - Matches job descriptions to resume using embeddings
 
 import json
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime
-from pypdf import PdfReader
 
-from modules.embeddings import EmbeddingsManager
+try:  # Optional dependency for environments running tests without PDF parsing
+    from pypdf import PdfReader
+except ImportError:  # pragma: no cover - handled in _extract_bullets_from_pdf
+    PdfReader = None
 
+from modules.config import AppConfig, load_app_config
+from modules.services import MatcherResourceService, get_matcher_service
 
-def load_config(config_path: str = "config.json") -> Dict:
-    """Load configuration from JSON file"""
-    with open(config_path, 'r') as f:
-        return json.load(f)
+if TYPE_CHECKING:  # pragma: no cover - only for static typing
+    from modules.embeddings import EmbeddingsManager
 
 
 class ResumeMatcher:
     """Analyzes job descriptions against resume to calculate match scores"""
-    
-    def __init__(self, config_path: str = "config.json", cache_path: str = "data/job_matches_cache.json"):
-        """Initialize matcher with configuration"""
-        self.config = load_config(config_path)
-        self.matcher_config = self.config.get("matcher", {})
-        self.cache_path = cache_path
-        
-        # Initialize embeddings manager
-        model_name = self.matcher_config.get("embedding_model")
-        self.embeddings = EmbeddingsManager(model_name=model_name)
-        
-        # Load resume
-        self.resume_bullets = self._load_resume()
-        
-        # Build or load resume index
-        if self.embeddings.index_exists():
-            print("📂 Loading cached resume embeddings...")
-            self.embeddings.load_index()
-        else:
-            print("🔨 Building resume embeddings...")
-            self.embeddings.build_resume_index(self.resume_bullets)
-        
-        print(f"✅ Resume loaded with {len(self.resume_bullets)} bullets\n")
-        
-        # Load match cache
+
+    def __init__(
+        self,
+        config: Optional[AppConfig] = None,
+        *,
+        config_path: str = "config.json",
+        cache_path: Optional[str] = None,
+        resume_bullets: Optional[List[str]] = None,
+        embeddings_manager: Optional["EmbeddingsManager"] = None,
+        resources: Optional[MatcherResourceService] = None,
+    ):
+        """Initialize matcher with configuration and shared resources."""
+
+        self.config = config or load_app_config(config_path)
+        self.matcher_config = self.config.matcher
+
+        if resources is None:
+            resources = get_matcher_service(
+                self.config,
+                cache_path=cache_path or "data/job_matches_cache.json",
+            )
+        elif cache_path:
+            resources.cache_path = cache_path
+
+        if resume_bullets is not None:
+            resources.set_resume_bullets(resume_bullets)
+        if embeddings_manager is not None:
+            resources.set_embeddings_manager(embeddings_manager)
+
+        self.resources = resources
+        self.cache_path = self.resources.cache_path
+        self.resume_cache_path = self.resources.resume_cache_path
+
+        self._resume_index_prepared = False
+
+        # Load match cache via shared service
         self.match_cache = self._load_match_cache()
         print(f"📦 Loaded {len(self.match_cache)} cached job matches\n")
     
-    def _load_match_cache(self) -> Dict[str, Dict]:
+    def _read_match_cache_from_disk(self) -> Dict[str, Dict]:
         """Load cached match results from disk"""
+        if not self.cache_path or self.cache_path == ":memory:":
+            return {}
+
         if not os.path.exists(self.cache_path):
             return {}
-        
+
         try:
             with open(self.cache_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
             print(f"⚠️  Error loading match cache: {e}")
             return {}
-    
+
+    def _load_match_cache(self) -> Dict[str, Dict]:
+        if self.resources:
+            return self.resources.provide_match_cache(self._read_match_cache_from_disk)
+        return self._read_match_cache_from_disk()
+
     def _save_match_cache(self):
         """Save match cache to disk"""
         try:
-            os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
-            with open(self.cache_path, 'w', encoding='utf-8') as f:
-                json.dump(self.match_cache, f, indent=2, ensure_ascii=False)
+            dirpath = os.path.dirname(self.cache_path) if self.cache_path else ""
+            if dirpath:
+                os.makedirs(dirpath, exist_ok=True)
+            if self.cache_path and self.cache_path != ":memory:":
+                with open(self.cache_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.match_cache, f, indent=2, ensure_ascii=False)
+            if self.resources:
+                self.resources.update_match_cache(self.match_cache)
         except Exception as e:
             print(f"⚠️  Error saving match cache: {e}")
     
     def _get_cached_match(self, job_id: str) -> Optional[Dict]:
         """Get cached match result for a job ID"""
         return self.match_cache.get(job_id)
-    
+
     def _cache_match(self, job_id: str, match_result: Dict):
         """Cache a match result"""
         match_result["last_updated"] = datetime.now().isoformat()
         self.match_cache[job_id] = match_result
-    
+
     def _load_resume(self) -> List[str]:
         """Load resume from cached text file or PDF, including skills section"""
-        cached_path = "data/resume_parsed.txt"
-        
-        if os.path.exists(cached_path):
+        cached_path = self.resume_cache_path
+
+        if cached_path and cached_path != ":memory:" and os.path.exists(cached_path):
             print(f"📄 Loading resume from {cached_path}")
             with open(cached_path, 'r', encoding='utf-8') as f:
                 bullets = [line.strip() for line in f if line.strip()]
-            
+
             # Add explicit skills as pseudo-bullets for better matching
             # This ensures technologies mentioned in skills section but not in bullets are indexed
             skills_bullets = self._get_skills_bullets()
             if skills_bullets:
                 print(f"📋 Adding {len(skills_bullets)} skill entries from skills section")
                 bullets.extend(skills_bullets)
-            
+
             return bullets
-        
+
         # Extract from PDF if no cache
-        resume_path = self.config.get("resume_path", "input/resume.pdf")
+        resume_path = self.config.resume_path
         if not os.path.exists(resume_path):
             raise FileNotFoundError(f"Resume not found at {resume_path}")
-        
+
         print(f"📄 Extracting text from {resume_path}")
         bullets = self._extract_bullets_from_pdf(resume_path)
-        
+
         # Cache for future use (bullets only, skills added separately)
-        os.makedirs("data", exist_ok=True)
-        with open(cached_path, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(bullets))
-        
+        if cached_path and cached_path != ":memory:":
+            cache_dir = os.path.dirname(cached_path)
+            if cache_dir:
+                os.makedirs(cache_dir, exist_ok=True)
+            with open(cached_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(bullets))
+
         # Add skills
         skills_bullets = self._get_skills_bullets()
         if skills_bullets:
             print(f"📋 Adding {len(skills_bullets)} skill entries from skills section")
             bullets.extend(skills_bullets)
-        
+
         return bullets
+
+    def _get_resume_bullets(self) -> List[str]:
+        """Return resume bullets, loading from disk if necessary."""
+        return self.resources.provide_resume_bullets(self._load_resume)
+
+    def _create_embeddings_manager(self) -> "EmbeddingsManager":
+        from modules.embeddings import EmbeddingsManager  # Local import to avoid heavy dependency unless needed
+
+        model_name = self.matcher_config.get("embedding_model")
+        return EmbeddingsManager(model_name=model_name)
+
+    def _get_embeddings_manager(self) -> "EmbeddingsManager":
+        return self.resources.provide_embeddings(self._create_embeddings_manager)
+
+    def _prepare_embeddings(self) -> "EmbeddingsManager":
+        embeddings = self._get_embeddings_manager()
+        if not self._resume_index_prepared:
+            resume_bullets = self._get_resume_bullets()
+            if embeddings.index_exists():
+                print("📂 Loading cached resume embeddings...")
+                embeddings.load_index()
+                if getattr(embeddings, "resume_bullets", None):
+                    self.resources.set_resume_bullets(embeddings.resume_bullets)
+            else:
+                print("🔨 Building resume embeddings...")
+                embeddings.build_resume_index(resume_bullets)
+
+            print(f"✅ Resume loaded with {len(self._get_resume_bullets())} bullets\n")
+            self._resume_index_prepared = True
+
+        return embeddings
     
     def _get_skills_bullets(self) -> List[str]:
         """
@@ -122,7 +182,7 @@ class ResumeMatcher:
         This ensures technologies in skills but not in experience bullets are still indexed.
         """
         # Read from config or hardcoded skills
-        skills_config = self.config.get("explicit_skills", {})
+        skills_config = self.config.explicit_skills
         
         if not skills_config:
             # Fallback: try to extract from PDF or use default
@@ -146,6 +206,9 @@ class ResumeMatcher:
     
     def _extract_bullets_from_pdf(self, pdf_path: str) -> List[str]:
         """Extract bullet points from resume PDF"""
+        if PdfReader is None:
+            raise ImportError("pypdf is required to extract resume text")
+
         reader = PdfReader(pdf_path)
         text = "".join(page.extract_text() for page in reader.pages)
         
@@ -436,7 +499,7 @@ class ResumeMatcher:
     def analyze_match(self, job: Dict) -> Dict:
         """Analyze how well resume matches a job using hybrid approach"""
         requirements = self._parse_job_to_requirements(job)
-        
+
         if not requirements["all_requirements"]:
             return {
                 "fit_score": 0,
@@ -449,7 +512,10 @@ class ResumeMatcher:
                 "missing_technologies": [],
                 "error": "No requirements found in job"
             }
-        
+
+        embeddings = self._prepare_embeddings()
+        resume_bullets = self._get_resume_bullets()
+
         # 1. KEYWORD MATCHING (Explicit technology match)
         job_text = " ".join([
             job.get('summary', ''),
@@ -457,10 +523,10 @@ class ResumeMatcher:
             job.get('skills', '')
         ])
         job_techs = self._extract_technologies(job_text)
-        
-        resume_text = " ".join(self.resume_bullets)
+
+        resume_text = " ".join(resume_bullets)
         resume_techs = self._extract_technologies(resume_text)
-        
+
         # Calculate keyword overlap
         matched_techs = job_techs & resume_techs
         keyword_overlap = len(matched_techs) / len(job_techs) if job_techs else 0
@@ -468,17 +534,17 @@ class ResumeMatcher:
         # 2. SEMANTIC SEARCH (Contextual understanding)
         top_k = self.matcher_config.get("top_k", 5)
         threshold = self.matcher_config.get("similarity_threshold", 0.30)  # Tuned for technical text matching
-        
+
         # Search with all requirements
-        results = self.embeddings.search(requirements["all_requirements"], k=top_k)
-        
+        results = embeddings.search(requirements["all_requirements"], k=top_k)
+
         # Collect unique matched bullets
         matched_bullets_map = {}
         for req_matches in results:
             for match in req_matches:
-                bullet_text = self.resume_bullets[match["index"]]
+                bullet_text = resume_bullets[match["index"]]
                 similarity = match["similarity"]
-                
+
                 if similarity >= threshold:
                     matched_bullets_map[bullet_text] = max(
                         matched_bullets_map.get(bullet_text, 0),
@@ -497,7 +563,7 @@ class ResumeMatcher:
         
         if must_haves:
             # Search for must-haves specifically
-            must_have_results = self.embeddings.search(must_haves, k=top_k)
+            must_have_results = embeddings.search(must_haves, k=top_k)
             for req_matches in must_have_results:
                 # If no match above threshold, it's missing
                 if not any(m["similarity"] >= threshold for m in req_matches):

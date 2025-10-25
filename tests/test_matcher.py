@@ -1,143 +1,129 @@
-"""
-Test Resume Matcher
-"""
+"""Test suite for the resume matcher with injectable dependencies."""
+
+from __future__ import annotations
 
 import sys
 import os
+from typing import Dict, List
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.matcher import ResumeMatcher
+from modules.config import app_config_from_dict, clear_cached_configs
+from modules.services import MatcherResourceService, reset_matcher_service
+
+
+class FakeEmbeddingsManager:
+    """Lightweight stand-in for the embeddings manager used in tests."""
+
+    def __init__(self) -> None:
+        self.resume_bullets: List[str] = []
+
+    def index_exists(self) -> bool:
+        return bool(self.resume_bullets)
+
+    def load_index(self) -> None:
+        # No-op for the fake manager since we keep bullets in memory
+        return None
+
+    def build_resume_index(self, resume_bullets: List[str]) -> None:
+        self.resume_bullets = list(resume_bullets)
+
+    def search(self, query_texts: List[str], k: int = 5) -> List[List[Dict]]:
+        results: List[List[Dict]] = []
+        for query in query_texts:
+            matches = []
+            for idx, bullet in enumerate(self.resume_bullets):
+                similarity = self._similarity(query, bullet)
+                if similarity > 0:
+                    matches.append({
+                        "resume_bullet": bullet,
+                        "similarity": similarity,
+                        "index": idx,
+                    })
+            matches.sort(key=lambda item: item["similarity"], reverse=True)
+            results.append(matches[:k])
+        return results
+
+    @staticmethod
+    def _similarity(query: str, bullet: str) -> float:
+        query_tokens = set(query.lower().split())
+        bullet_tokens = set(bullet.lower().split())
+        if not query_tokens or not bullet_tokens:
+            return 0.0
+        overlap = query_tokens & bullet_tokens
+        if not overlap:
+            return 0.0
+        union = query_tokens | bullet_tokens
+        return round(len(overlap) / len(union), 3)
 
 
 def test_matcher():
-    """Test resume matcher with sample jobs"""
-    
-    print("=" * 70)
-    print("🧪 Testing Resume Matcher")
-    print("=" * 70)
-    print()
-    
-    # Initialize matcher
-    print("📦 Initializing matcher...")
-    matcher = ResumeMatcher()
-    print()
-    
-    # Sample jobs (simulating scraper output)
+    """Verify that the matcher can score jobs using injected dependencies."""
+
+    reset_matcher_service()
+    clear_cached_configs()
+
+    config = app_config_from_dict({
+        "resume_path": "unused.pdf",
+        "explicit_skills": {"tools": ["Python", "React", "Docker"]},
+        "matcher": {
+            "embedding_model": "fake-model",
+            "similarity_threshold": 0.1,
+            "top_k": 3,
+            "penalty_per_missing_must_have": 0.05,
+            "weights": {
+                "keyword_match": 0.4,
+                "semantic_coverage": 0.4,
+                "semantic_strength": 0.1,
+                "seniority_alignment": 0.1,
+            },
+        },
+    })
+
+    resume_bullets = [
+        "Developed scalable Python APIs for data processing",
+        "Built responsive React dashboards for analytics",
+        "Automated deployments with Docker and CI/CD pipelines",
+    ]
+
+    embeddings = FakeEmbeddingsManager()
+
+    resources = MatcherResourceService(
+        config,
+        cache_path=":memory:",
+        resume_cache_path=":memory:",
+    )
+    resources.set_resume_bullets(resume_bullets)
+    resources.set_embeddings_manager(embeddings)
+
+    matcher = ResumeMatcher(config=config, resources=resources)
+
     sample_jobs = [
         {
-            "title": "Full Stack Developer",
-            "company": "Tech Corp",
-            "location": "Toronto",
-            "description": "Looking for a full stack developer to build modern web applications.",
-            "required_skills": [
-                "React Native mobile development",
-                "Node.js backend APIs",
-                "AWS cloud infrastructure",
-                "PostgreSQL databases",
-                "Docker and container orchestration"
-            ],
-            "additional_requirements": [
-                "3+ years of experience",
-                "Strong communication skills"
-            ]
-        },
-        {
+            "id": "job-1",
             "title": "Backend Engineer",
-            "company": "DataTech Inc",
+            "company": "DataTech",
             "location": "Remote",
-            "description": "Build scalable data pipelines and APIs.",
-            "required_skills": [
-                "Python backend development",
-                "AWS Lambda and serverless",
-                "PostgreSQL and database optimization",
-                "REST API design",
-                "Data pipeline experience"
-            ],
-            "additional_requirements": [
-                "Experience with Airflow or similar",
-                "Strong SQL skills"
-            ]
+            "summary": "Looking for engineers to build Python services",
+            "responsibilities": "Develop and deploy Python APIs",
+            "skills": "Python, Docker, REST APIs",
         },
         {
-            "title": "Senior Frontend Engineer",
-            "company": "UI Solutions",
-            "location": "Waterloo",
-            "description": "Lead frontend development for our SaaS platform.",
-            "required_skills": [
-                "React.js and modern JavaScript",
-                "TypeScript",
-                "Component libraries and design systems",
-                "Performance optimization",
-                "Mentoring junior developers"
-            ],
-            "additional_requirements": [
-                "5+ years frontend experience",
-                "Leadership experience"
-            ]
-        },
-        {
-            "title": "Machine Learning Engineer",
-            "company": "AI Systems",
+            "id": "job-2",
+            "title": "Frontend Developer",
+            "company": "UI Works",
             "location": "Toronto",
-            "description": "Build and deploy ML models at scale.",
-            "required_skills": [
-                "Python machine learning",
-                "TensorFlow or PyTorch",
-                "Model deployment and MLOps",
-                "Cloud infrastructure (AWS/GCP)",
-                "SQL and data processing"
-            ],
-            "additional_requirements": [
-                "PhD or Masters in CS/ML preferred",
-                "Research publications"
-            ]
-        }
+            "summary": "Create interactive dashboards",
+            "responsibilities": "Design and build React dashboards",
+            "skills": "React, TypeScript, UX",
+        },
     ]
-    
-    # Analyze all jobs
-    print("🔍 Analyzing jobs...\n")
+
     results = matcher.batch_analyze(sample_jobs)
-    
-    # Print results
-    print()
-    print("=" * 70)
-    print("📊 RESULTS (sorted by fit score)")
-    print("=" * 70)
-    print()
-    
-    for i, result in enumerate(results, 1):
-        job = result["job"]
-        match = result["match"]
-        
-        # Color code based on fit score
-        if match["fit_score"] >= 70:
-            emoji = "🟢"
-        elif match["fit_score"] >= 50:
-            emoji = "🟡"
-        else:
-            emoji = "🔴"
-        
-        print(f"{emoji} #{i} - Fit Score: {match['fit_score']}/100")
-        print(f"   📋 {job['title']} at {job['company']}")
-        print(f"   📍 {job['location']}")
-        print(f"   📈 Coverage: {match['coverage']}% | Skills: {match['skill_match']}% | Seniority: {match['seniority_alignment']}%")
-        print(f"   ✨ {len(match['matched_bullets'])} bullets matched")
-        
-        # Show top 3 matched bullets
-        if match['matched_bullets']:
-            print(f"   Top matches:")
-            for j, bullet in enumerate(match['matched_bullets'][:3], 1):
-                text = bullet['text'][:70] + "..." if len(bullet['text']) > 70 else bullet['text']
-                print(f"      {j}. [{bullet['similarity']:.2f}] {text}")
-        
-        print()
-    
-    print("=" * 70)
-    print("✅ Test completed!")
-    print("=" * 70)
 
-
-if __name__ == "__main__":
-    test_matcher()
+    assert len(results) == 2
+    assert [result["job"]["id"] for result in results] == ["job-1", "job-2"]
+    assert results[0]["match"]["fit_score"] >= results[1]["match"]["fit_score"]
+    assert len(matcher.match_cache) == 2
