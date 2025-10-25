@@ -15,9 +15,10 @@ from modules.auth import WaterlooWorksAuth
 from modules.filter_engine import FilterEngine
 from modules.filtering import FilterDecision, RealTimeFilterStrategy
 from modules.scraper import WaterlooWorksScraper
-from modules.matcher import ResumeMatcher, load_config
+from modules.matcher import ResumeMatcher
 from modules.results_collector import RealTimeResultsCollector
-from modules.config import resolve_waterlooworks_credentials
+from modules.config import load_app_config, resolve_waterlooworks_credentials
+from modules.services import MatcherResourceService, register_matcher_service
 
 try:  # Optional import to avoid circular dependencies in non-CLI usage
     from modules.cli_auth import obtain_authenticated_session
@@ -30,8 +31,10 @@ class JobAnalyzer:
     
     def __init__(self, config_path: str = "config.json"):
         """Initialize analyzer with configuration"""
-        self.config = load_config(config_path)
-        self.matcher = ResumeMatcher(config_path)
+        self.config = load_app_config(config_path)
+        resources = MatcherResourceService(self.config)
+        register_matcher_service(resources)
+        self.matcher = ResumeMatcher(config=self.config, resources=resources)
         self.auth: Optional[WaterlooWorksAuth] = None  # Will be set during scraping
         self.scraper = None  # Will be set during scraping
         self.filter_engine = FilterEngine(self.config)
