@@ -62,11 +62,9 @@ class JobAnalyzer:
         # Step 1: Login and navigate
         print("🔐 Logging into WaterlooWorks...")
         username = input("Username (UW email): ").strip()
-        import getpass
         password = getpass.getpass("Password: ")
         print()
         
-        from modules.auth import WaterlooWorksAuth
         auth = WaterlooWorksAuth(username, password)
         auth.login()
         self.auth = auth
