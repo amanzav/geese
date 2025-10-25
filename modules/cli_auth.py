@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import getpass
-import os
 from typing import Optional, Tuple
 
 from modules.auth import WaterlooWorksAuth
+from modules.config import resolve_waterlooworks_credentials
 
 
 def prompt_for_credentials(
@@ -14,8 +14,7 @@ def prompt_for_credentials(
 ) -> Tuple[str, str]:
     """Prompt for credentials, falling back to environment variables."""
 
-    resolved_username = username or os.getenv("WATERLOOWORKS_USERNAME")
-    resolved_password = password or os.getenv("WATERLOOWORKS_PASSWORD")
+    resolved_username, resolved_password = resolve_waterlooworks_credentials(username, password)
 
     if not resolved_username:
         resolved_username = input("Username (UW email): ").strip()

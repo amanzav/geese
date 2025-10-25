@@ -11,16 +11,13 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 from modules.auth import WaterlooWorksAuth
 from modules.filter_engine import FilterEngine
 from modules.filtering import FilterDecision, RealTimeFilterStrategy
 from modules.scraper import WaterlooWorksScraper
 from modules.matcher import ResumeMatcher, load_config
 from modules.results_collector import RealTimeResultsCollector
+from modules.config import resolve_waterlooworks_credentials
 
 try:  # Optional import to avoid circular dependencies in non-CLI usage
     from modules.cli_auth import obtain_authenticated_session
@@ -373,9 +370,16 @@ class JobAnalyzer:
                 existing_auth.login()
             return existing_auth
 
+        username, password = resolve_waterlooworks_credentials()
+        if username and password:
+            auth = WaterlooWorksAuth(username, password)
+            auth.login()
+            return auth
+
         if obtain_authenticated_session is None:
             raise RuntimeError(
-                "No credential helper available. Ensure modules.cli_auth is accessible."
+                "No credential helper available and credentials are missing. "
+                "Set WATERLOOWORKS_USERNAME and WATERLOOWORKS_PASSWORD or install CLI helpers."
             )
 
         return obtain_authenticated_session()
