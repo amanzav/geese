@@ -9,6 +9,7 @@ from typing import Optional, Sequence, TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover
     from modules.pipeline import JobAnalyzer
 
+from modules.config import resolve_waterlooworks_credentials
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Analyze WaterlooWorks jobs")
@@ -115,15 +116,14 @@ def _run_cover_letter_mode(analyzer: "JobAnalyzer") -> None:
     print()
 
     print("🔐 Logging into WaterlooWorks...")
-    username = os.getenv("WATERLOOWORKS_USERNAME")
-    password = os.getenv("WATERLOOWORKS_PASSWORD")
+    username, password = resolve_waterlooworks_credentials()
 
     if not username or not password:
         print("❌ Error: Credentials not found in .env file")
         print("   Please set WATERLOOWORKS_USERNAME and WATERLOOWORKS_PASSWORD")
         return
 
-    print(f"   Using credentials from .env: {username}")
+    print(f"   Using credentials from configuration: {username}")
     print()
 
     auth = WaterlooWorksAuth(username, password)
@@ -169,15 +169,14 @@ def _run_upload_covers_mode(analyzer: "JobAnalyzer") -> None:
     print()
 
     print("🔐 Logging into WaterlooWorks...")
-    username = os.getenv("WATERLOOWORKS_USERNAME")
-    password = os.getenv("WATERLOOWORKS_PASSWORD")
+    username, password = resolve_waterlooworks_credentials()
 
     if not username or not password:
         print("❌ Error: Credentials not found in .env file")
         print("   Please set WATERLOOWORKS_USERNAME and WATERLOOWORKS_PASSWORD")
         return
 
-    print(f"   Using credentials from .env: {username}")
+    print(f"   Using credentials from configuration: {username}")
     print()
 
     auth = WaterlooWorksAuth(username, password)
