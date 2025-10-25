@@ -5,6 +5,7 @@
 data/
 saved_jobs/
 logs/
+cover_letters/
 
 # Python
 __pycache__/
@@ -49,3 +50,4 @@ Thumbs.db
 input/*.pdf
 input/*.docx
 !input/.gitkeep
+.env

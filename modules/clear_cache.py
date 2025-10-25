@@ -21,6 +21,7 @@ def clear_caches():
         ("embeddings/resume/index.faiss", "Resume embeddings index"),
         ("embeddings/resume/metadata.json", "Resume embeddings metadata"),
         ("data/jobs_scraped.json", "Scraped jobs data"),
+        ("data/uploaded_cover_letters.json", "Uploaded cover letters tracking"),
     ]
     
     cleared_count = 0
