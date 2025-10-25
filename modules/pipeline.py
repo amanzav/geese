@@ -1,13 +1,15 @@
-"""
-Waterloo Works Automator - Main Pipeline
-Scrapes jobs, analyzes matches, and shows best opportunities
+"""Waterloo Works Automator - Main Pipeline.
+
+This module coordinates scraping, analysis, and persistence of WaterlooWorks
+job postings. Real-time processing is supported through dedicated helper
+objects that encapsulate filtering logic, credential handling, and result
+collection.
 """
 
 import json
 import os
-import getpass
 from datetime import datetime
-from typing import List, Dict
+from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 
@@ -15,8 +17,15 @@ load_dotenv()
 
 from modules.auth import WaterlooWorksAuth
 from modules.filter_engine import FilterEngine
+from modules.filtering import FilterDecision, RealTimeFilterStrategy
 from modules.scraper import WaterlooWorksScraper
 from modules.matcher import ResumeMatcher, load_config
+from modules.results_collector import RealTimeResultsCollector
+
+try:  # Optional import to avoid circular dependencies in non-CLI usage
+    from modules.cli_auth import obtain_authenticated_session
+except ImportError:  # pragma: no cover - fallback for environments without CLI helpers
+    obtain_authenticated_session = None
 
 
 class JobAnalyzer:
@@ -26,20 +35,27 @@ class JobAnalyzer:
         """Initialize analyzer with configuration"""
         self.config = load_config(config_path)
         self.matcher = ResumeMatcher(config_path)
-        self.auth = None  # Will be set during scraping
+        self.auth: Optional[WaterlooWorksAuth] = None  # Will be set during scraping
         self.scraper = None  # Will be set during scraping
         self.filter_engine = FilterEngine(self.config)
         print("✅ Job Analyzer initialized\n")
-    
-    def run_realtime_pipeline(self, auto_save_to_folder: bool = True) -> List[Dict]:
+
+    def run_realtime_pipeline(
+        self,
+        auto_save_to_folder: bool = True,
+        auth: Optional[WaterlooWorksAuth] = None,
+        driver=None,
+    ) -> List[Dict]:
         """
         Run REAL-TIME pipeline: scrape → analyze → save IMMEDIATELY per job
-        
+
         Shows score for each job as it's processed and saves high-scoring jobs instantly.
-        
+
         Args:
             auto_save_to_folder: If True, save high-scoring jobs to WW folder immediately
-        
+            auth: Optional pre-authenticated WaterlooWorks session
+            driver: Optional Selenium driver if already authenticated
+
         Returns:
             List of analyzed jobs sorted by fit score
         """
@@ -49,37 +65,31 @@ class JobAnalyzer:
         print()
         
         # Get configuration
-        auto_save_threshold = self.config.get("matcher", {}).get("auto_save_threshold", 30)
-        folder_name = self.config.get("waterlooworks_folder", "geese")
-        preferred_locations = self.config.get("preferred_locations", [])
-        keywords = self.config.get("keywords_to_match", [])
-        avoid_companies = self.config.get("companies_to_avoid", [])
-        
+        filter_strategy = RealTimeFilterStrategy(self.config)
+        collector = RealTimeResultsCollector()
+
+        auto_save_threshold = filter_strategy.auto_save_threshold
+        folder_name = filter_strategy.folder_name
+
         print(f"⚙️  Auto-save threshold: {auto_save_threshold}")
         print(f"📁 Target folder: '{folder_name}'")
         print()
-        
+
         # Step 1: Login and navigate
-        print("🔐 Logging into WaterlooWorks...")
-        username = input("Username (UW email): ").strip()
-        password = getpass.getpass("Password: ")
-        print()
-        
-        auth = WaterlooWorksAuth(username, password)
-        auth.login()
-        self.auth = auth
-        
+        if auth or driver:
+            print("🔐 Using existing WaterlooWorks session")
+        else:
+            print("🔐 Logging into WaterlooWorks...")
+
+        resolved_auth, resolved_driver = self._ensure_session(auth, driver)
+        self.auth = resolved_auth
+
         llm_provider = self.config.get("matcher", {}).get("llm_provider", "gemini")
-        scraper = WaterlooWorksScraper(auth.driver, llm_provider=llm_provider)
+        scraper = WaterlooWorksScraper(resolved_driver, llm_provider=llm_provider)
         self.scraper = scraper
         scraper.go_to_jobs_page()
         
         # Step 2: Process jobs in real-time
-        all_results = []
-        saved_count = 0
-        skipped_count = 0
-        total_jobs = 0
-        
         try:
             # Get pagination info
             try:
@@ -100,33 +110,36 @@ class JobAnalyzer:
                 print("-" * 70)
                 
                 rows = scraper.get_job_table()
-                
-                for i, row in enumerate(rows, 1):
-                    total_jobs += 1
-                    
+
+                for _, row in enumerate(rows, 1):
                     # Parse basic job info
                     job_data = scraper.parse_job_row(row)
                     if not job_data or not job_data.get('id'):
                         continue
-                    
+
+                    collector.start_job()
+
                     # Show job being processed
-                    print(f"\n[Job {total_jobs}] {job_data.get('title', 'Unknown')} @ {job_data.get('company', 'N/A')}")
+                    print(
+                        f"\n[Job {collector.total_jobs}] {job_data.get('title', 'Unknown')} @ "
+                        f"{job_data.get('company', 'N/A')}"
+                    )
                     print(f"           📍 {job_data.get('location', 'N/A')}")
-                    
+
                     # Get detailed job info
                     print(f"           🔍 Scraping details...", end=" ")
                     job_data = scraper.get_job_details(job_data)
                     print("✓")
-                    
+
                     # Analyze match IMMEDIATELY
                     print(f"           🧠 Analyzing match...", end=" ")
                     result = self.matcher.analyze_single_job(job_data)
                     print("✓")
-                    
+
                     # Extract score
                     match = result["match"]
                     fit_score = match["fit_score"]
-                    
+
                     # Show score with color coding
                     if fit_score >= 70:
                         emoji = "🟢"
@@ -139,66 +152,38 @@ class JobAnalyzer:
                     
                     print(f"           {emoji} FIT SCORE: {fit_score}/100")
                     
-                    # Apply filters
-                    should_skip = False
-                    
-                    # Location filter
-                    if preferred_locations:
-                        job_location = job_data.get("location", "").lower()
-                        if not any(loc.lower() in job_location for loc in preferred_locations):
-                            print(f"           ⏭️  Skipped (location filter)")
-                            should_skip = True
-                    
-                    # Keyword filter
-                    if not should_skip and keywords:
-                        job_text_parts = []
-                        for field in ['title', 'summary', 'responsibilities', 'skills']:
-                            if job_data.get(field) and job_data[field] != 'N/A':
-                                job_text_parts.append(job_data[field])
-                        job_text = " ".join(job_text_parts).lower()
-                        
-                        if not any(kw.lower() in job_text for kw in keywords):
-                            print(f"           ⏭️  Skipped (keyword filter)")
-                            should_skip = True
-                    
-                    # Company filter
-                    if not should_skip and avoid_companies:
-                        company = job_data.get("company", "").lower()
-                        if any(avoid.lower() in company for avoid in avoid_companies):
-                            print(f"           ⏭️  Skipped (company filter)")
-                            should_skip = True
-                    
-                    # Save if meets threshold
-                    if not should_skip and fit_score >= auto_save_threshold and auto_save_to_folder:
+                    decision: FilterDecision = filter_strategy.decide(
+                        job_data, match, auto_save_to_folder
+                    )
+
+                    if decision.skip:
+                        if decision.message:
+                            print(f"           ⏭️  {decision.message}")
+                        collector.record_skipped()
+                        scraper.close_job_details_panel()
+                    elif decision.auto_save:
                         print(f"           💾 Saving to '{folder_name}' folder...", end=" ")
-                        
-                        # Re-add row_element for saving
+
                         job_data["row_element"] = row
                         success = scraper.save_job_to_folder(job_data, folder_name=folder_name)
-                        
+
                         if success:
                             print("✅ SAVED!")
-                            saved_count += 1
+                            collector.record_saved()
                         else:
                             print("❌ Failed")
-                            # Close panel if save failed
+                            collector.record_skipped()
                             scraper.close_job_details_panel()
-                        
-                        # Remove row_element after saving
-                        if "row_element" in job_data:
-                            del job_data["row_element"]
-                    elif not should_skip and fit_score < auto_save_threshold:
-                        print(f"           ⏭️  Not saved (score < {auto_save_threshold})")
-                        skipped_count += 1
-                        # Close the panel since we're not saving
-                        scraper.close_job_details_panel()
+
+                        job_data.pop("row_element", None)
                     else:
-                        skipped_count += 1
-                        # Close the panel since we're skipping
+                        if decision.message:
+                            print(f"           ⏭️  {decision.message}")
+                        collector.record_skipped()
                         scraper.close_job_details_panel()
-                    
+
                     # Store result
-                    all_results.append(result)
+                    collector.add_result(result)
                 
                 # Go to next page
                 if page < num_pages:
@@ -217,21 +202,18 @@ class JobAnalyzer:
         print("\n" + "=" * 70)
         print("💾 SAVING RESULTS TO FILES")
         print("=" * 70)
-        
-        # Sort by fit score
-        all_results.sort(key=lambda x: x["match"]["fit_score"], reverse=True)
-        
-        self.save_results(all_results)
-        
+
+        all_results = collector.persist(self.save_results)
+
         # Step 4: Show final summary
         print("\n" + "=" * 70)
         print("📊 FINAL SUMMARY")
         print("=" * 70)
-        print(f"Total jobs processed: {total_jobs}")
-        print(f"✅ Saved to WW folder: {saved_count}")
-        print(f"⏭️  Skipped/Low score: {skipped_count}")
+        print(f"Total jobs processed: {collector.total_jobs}")
+        print(f"✅ Saved to WW folder: {collector.saved_count}")
+        print(f"⏭️  Skipped/Low score: {collector.skipped_count}")
         print()
-        
+
         self.show_summary(all_results[:10])  # Show top 10
         
         # Cleanup
@@ -305,14 +287,18 @@ class JobAnalyzer:
         
         return filtered_results
     
-    def _scrape_jobs(self, detailed: bool = True) -> List[Dict]:
+    def _scrape_jobs(
+        self,
+        detailed: bool = True,
+        auth: Optional[WaterlooWorksAuth] = None,
+    ) -> List[Dict]:
         """Scrape jobs from WaterlooWorks with incremental saving"""
         try:
             # Load existing jobs from cache
             os.makedirs("data", exist_ok=True)
             cache_path = "data/jobs_scraped.json"
             existing_jobs = {}
-            
+
             if os.path.exists(cache_path):
                 print("📂 Loading existing jobs from cache...")
                 with open(cache_path, 'r', encoding='utf-8') as f:
@@ -320,20 +306,18 @@ class JobAnalyzer:
                     # Build a dict for fast lookup by job ID
                     existing_jobs = {job['id']: job for job in cached if 'id' in job}
                     print(f"   Found {len(existing_jobs)} cached jobs\n")
-            
-            # Get credentials
-            print("🔐 Enter your WaterlooWorks credentials")
-            username = input("Username (UW email): ").strip()
-            password = getpass.getpass("Password: ")
-            print()
-            
+
+            if auth:
+                print("🔐 Using existing WaterlooWorks session")
+            else:
+                print("🔐 Logging into WaterlooWorks...")
+
             # Login
-            auth = WaterlooWorksAuth(username, password)
-            auth.login()
-            
+            auth = self._resolve_auth(auth)
+
             # Store auth and scraper for later use (auto-save feature)
             self.auth = auth
-            
+
             # Scrape with incremental saving
             llm_provider = self.config.get("matcher", {}).get("llm_provider", "gemini")
             scraper = WaterlooWorksScraper(auth.driver, llm_provider=llm_provider)
@@ -378,6 +362,40 @@ class JobAnalyzer:
                     return json.load(f)
             
             return []
+
+    def _resolve_auth(
+        self, existing_auth: Optional[WaterlooWorksAuth] = None
+    ) -> WaterlooWorksAuth:
+        """Ensure an authenticated WaterlooWorks session is available."""
+
+        if existing_auth:
+            if existing_auth.driver is None:
+                existing_auth.login()
+            return existing_auth
+
+        if obtain_authenticated_session is None:
+            raise RuntimeError(
+                "No credential helper available. Ensure modules.cli_auth is accessible."
+            )
+
+        return obtain_authenticated_session()
+
+    def _ensure_session(
+        self,
+        auth: Optional[WaterlooWorksAuth],
+        driver: Optional[Any],
+    ) -> Tuple[Optional[WaterlooWorksAuth], Any]:
+        """Resolve authentication/session inputs for real-time processing."""
+
+        if auth:
+            resolved_auth = self._resolve_auth(auth)
+            return resolved_auth, resolved_auth.driver
+
+        if driver:
+            return None, driver
+
+        resolved_auth = self._resolve_auth(None)
+        return resolved_auth, resolved_auth.driver
     
     def _normalize_job_data(self, jobs: List[Dict]) -> List[Dict]:
         """Normalize job data format for consistency"""
