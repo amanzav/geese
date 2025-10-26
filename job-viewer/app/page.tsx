@@ -54,17 +54,15 @@ export default function Home() {
   }
 
   return (
-    <main className="container mx-auto p-4 md:p-8">
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle className="text-3xl">Job Matches Dashboard</CardTitle>
-          <CardDescription>
-            Browse and filter through {jobs.length} matched job opportunities
-          </CardDescription>
-        </CardHeader>
-      </Card>
+    <div className="container mx-auto p-6 space-y-6">
+      <div className="flex flex-col gap-2">
+        <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
+        <p className="text-muted-foreground">
+          Browse and filter through {jobs.length} matched job opportunities
+        </p>
+      </div>
 
       <DataTable columns={columns} data={jobs} />
-    </main>
+    </div>
   );
 }
