@@ -1,6 +1,7 @@
 """Scraper Module - Handles job scraping and navigation on WaterlooWorks"""
 
 import time
+import traceback
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -128,7 +129,6 @@ class WaterlooWorksScraper:
             return job_data
         except Exception as e:
             print(f"⚠️  Error parsing job row: {e}")
-            import traceback
             traceback.print_exc()
             return None
 
@@ -207,7 +207,6 @@ class WaterlooWorksScraper:
                     sections["compensation"] = comp_data
                 except Exception as e:
                     print(f"  ⚠️  Error extracting compensation: {e}")
-                    import traceback
                     traceback.print_exc()
                     sections["compensation"] = {
                         "value": None,
@@ -236,7 +235,6 @@ class WaterlooWorksScraper:
 
         except Exception as e:
             print(f"❌ Error getting job details for {job_data.get('id', 'unknown')}: {e}")
-            import traceback
             traceback.print_exc()
             if "row_element" in job_data:
                 del job_data["row_element"]
@@ -366,7 +364,7 @@ class WaterlooWorksScraper:
             print(f"  ✅ Successfully saved job to '{folder_name}' folder")
             
             # Close the job details panel after saving
-            self.close_job_details_panel()
+            close_job_details_panel(self.driver)
             
             return True
 
@@ -374,10 +372,6 @@ class WaterlooWorksScraper:
             print(f"  ❌ Error saving job to folder: {e}")
             return False
     
-    def close_job_details_panel(self):
-        """Close the currently open job details panel"""
-        return close_job_details_panel(self.driver)
-
     def scrape_current_page(
         self,
         include_details=False,
@@ -424,7 +418,7 @@ class WaterlooWorksScraper:
                         )
                         job_data = self.get_job_details(job_data)
                         # Close the panel after getting details (batch mode)
-                        self.close_job_details_panel()
+                        close_job_details_panel(self.driver)
                     else:
                         # Remove row_element if not getting details
                         if "row_element" in job_data:
@@ -478,7 +472,7 @@ class WaterlooWorksScraper:
 
         # Check for pagination
         try:
-            num_pages = self.get_pagination_pages()
+            num_pages = get_pagination_pages(self.driver)
             print(f"📄 Total pages: {num_pages}\n")
         except Exception:
             print("📄 Single page (no pagination)\n")
@@ -508,7 +502,7 @@ class WaterlooWorksScraper:
             # Go to next page if not the last one
             if page < num_pages:
                 print(f"➡️  Going to page {page + 1}...\n")
-                self.next_page()
+                go_to_next_page(self.driver)
 
         print(f"\n🎉 Total jobs scraped: {len(all_jobs)}")
         
@@ -516,14 +510,6 @@ class WaterlooWorksScraper:
             print(f"✅ All jobs saved to database\n")
         
         return all_jobs
-
-    def get_pagination_pages(self):
-        """Get the number of pages in the current view"""
-        return get_pagination_pages(self.driver)
-
-    def next_page(self):
-        """Go to the next page in pagination"""
-        go_to_next_page(self.driver)
 
     def save_jobs_to_database(self, jobs):
         """Save scraped jobs to SQLite database

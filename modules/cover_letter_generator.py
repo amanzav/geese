@@ -19,6 +19,7 @@ from .utils import (
     navigate_to_folder, get_pagination_pages, go_to_next_page,
     get_jobs_from_page, sanitize_filename
 )
+from .config import load_app_config
 
 
 class CoverLetterGenerator:
@@ -41,10 +42,14 @@ class CoverLetterGenerator:
         self.cover_letters_dir = Path(cover_letters_folder)
         self.cover_letters_dir.mkdir(exist_ok=True)
         
+        # Load config for model names
+        config = load_app_config()
+        
         # Configure Gemini
         if api_key:
             genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel("gemini-2.0-flash-lite")
+            model_name = config.matcher.llm_models.get("gemini_lite", "gemini-2.0-flash-lite")
+            self.model = genai.GenerativeModel(model_name)
         else:
             self.model = None
         
@@ -76,14 +81,6 @@ class CoverLetterGenerator:
         if success:
             print("   ✓ Successfully navigated to Geese Jobs")
         return success
-    
-    def get_pagination_pages(self):
-        """Get the number of pages in the current view"""
-        return get_pagination_pages(self.driver)
-    
-    def next_page(self):
-        """Go to the next page in pagination"""
-        go_to_next_page(self.driver)
     
     def get_geese_jobs_from_page(self):
         """Get all job listings from the current Geese Jobs page"""
@@ -370,7 +367,7 @@ Aman Zaveri"""
             return stats
         
         # Get number of pages
-        num_pages = self.get_pagination_pages()
+        num_pages = get_pagination_pages(self.driver)
         print(f"\n📄 Found {num_pages} page(s) of jobs")
         
         # Collect jobs from all pages
@@ -387,7 +384,7 @@ Aman Zaveri"""
             # Go to next page if not the last one
             if page < num_pages:
                 print(f"   ➡️  Going to page {page + 1}...")
-                self.next_page()
+                go_to_next_page(self.driver)
         
         stats["total_jobs"] = len(all_jobs)
         

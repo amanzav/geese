@@ -4,6 +4,8 @@ Resume Matcher - Matches job descriptions to resume using embeddings
 
 import json
 import os
+import re
+import traceback
 from typing import Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime
 
@@ -30,7 +32,6 @@ class ResumeMatcher:
         cache_path: Optional[str] = None,
         resume_cache_path: Optional[str] = None,
         use_database: bool = True,
-        tech_patterns_path: str = "data/tech_patterns.json",
     ):
         """Initialize matcher with configuration.
         
@@ -40,7 +41,6 @@ class ResumeMatcher:
             cache_path: Path to JSON cache file (for backwards compatibility)
             resume_cache_path: Path to resume cache file
             use_database: Whether to use database for caching (default: True)
-            tech_patterns_path: Path to technology patterns JSON file
         """
 
         self.config = config or load_app_config(config_path)
@@ -49,14 +49,13 @@ class ResumeMatcher:
         # Cache paths
         self.cache_path = cache_path or "data/job_matches_cache.json"
         self.resume_cache_path = resume_cache_path or "data/resume_parsed.txt"
-        self.tech_patterns_path = tech_patterns_path
         self.use_database = use_database
 
         # Internal state
         self._resume_bullets: Optional[List[str]] = None
         self._embeddings_manager: Optional["EmbeddingsManager"] = None
         self._resume_index_prepared = False
-        self._tech_patterns: Optional[List[tuple]] = None
+        self._llm = None  # Lazy-load Gemini for tech extraction
 
         # Load match cache from database or JSON file
         self.match_cache = self._load_match_cache()
@@ -79,7 +78,6 @@ class ResumeMatcher:
             return {}
         except Exception as e:
             print(f"⚠️  Error loading match cache: {e}")
-            import traceback
             traceback.print_exc()
             return {}
 
@@ -118,7 +116,6 @@ class ResumeMatcher:
             print(f"   Check write permissions for: {self.cache_path}")
         except Exception as e:
             print(f"⚠️  Error saving match cache: {e}")
-            import traceback
             traceback.print_exc()
     
     def _get_cached_match(self, job_id: str) -> Optional[Dict]:
@@ -262,53 +259,81 @@ class ResumeMatcher:
         
         return bullets
     
-    def _load_tech_patterns(self) -> List[tuple]:
-        """Load technology patterns from JSON file"""
-        try:
-            if not os.path.exists(self.tech_patterns_path):
-                print(f"⚠️  Tech patterns file not found: {self.tech_patterns_path}")
-                return []
-            
-            with open(self.tech_patterns_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            # Convert JSON to list of tuples (name, pattern) sorted by priority
-            patterns = data.get("patterns", [])
-            sorted_patterns = sorted(patterns, key=lambda x: x.get("priority", 99))
-            
-            return [(p["name"], p["pattern"]) for p in sorted_patterns]
-        
-        except Exception as e:
-            print(f"⚠️  Error loading tech patterns: {e}")
-            return []
-    
-    def _get_tech_patterns(self) -> List[tuple]:
-        """Return tech patterns, loading from disk if necessary"""
-        if self._tech_patterns is None:
-            self._tech_patterns = self._load_tech_patterns()
-        return self._tech_patterns
+    def _get_llm(self):
+        """Get Gemini LLM instance, initializing if needed"""
+        if self._llm is None:
+            try:
+                import google.generativeai as genai
+                api_key = os.getenv("GEMINI_API_KEY")
+                if api_key:
+                    genai.configure(api_key=api_key)
+                    model_name = self.matcher_config.llm_models.get("gemini_fast", "gemini-2.0-flash-exp")
+                    self._llm = genai.GenerativeModel(model_name)
+                else:
+                    print("⚠️  GEMINI_API_KEY not found. Technology extraction will be limited.")
+                    self._llm = None
+            except Exception as e:
+                print(f"⚠️  Failed to initialize Gemini: {e}")
+                self._llm = None
+        return self._llm
     
     def _extract_technologies(self, text: str) -> set:
-        """Extract technology keywords from text using regex patterns"""
+        """Extract technology keywords using Gemini LLM"""
         if not text:
             return set()
         
-        import re
+        llm = self._get_llm()
+        if not llm:
+            # Fallback: basic keyword extraction from common tech terms
+            return self._extract_technologies_fallback(text)
         
-        # Load patterns from JSON file
-        tech_patterns = self._get_tech_patterns()
-        
-        if not tech_patterns:
-            print("⚠️  No tech patterns loaded, technology extraction disabled")
-            return set()
-        
+        try:
+            # Truncate text to avoid token limits
+            text_truncated = text[:3000]
+            
+            prompt = f"""Extract all technology names, frameworks, tools, and programming languages from this text.
+
+Text: {text_truncated}
+
+Return ONLY a comma-separated list of technology names (e.g., "Python, React, AWS, Docker").
+Include: programming languages, frameworks, databases, cloud platforms, dev tools.
+Exclude: soft skills, job roles, company names.
+Use canonical names (e.g., "JavaScript" not "JS", "PostgreSQL" not "Postgres").
+"""
+
+            response = llm.generate_content(prompt)
+            result = response.text.strip()
+            
+            # Parse comma-separated list
+            techs = {t.strip() for t in result.split(',') if t.strip()}
+            
+            # Clean up any markdown formatting
+            techs = {t.replace('`', '').replace('*', '') for t in techs}
+            
+            return techs
+            
+        except Exception as e:
+            print(f"⚠️  LLM tech extraction failed: {e}, using fallback")
+            return self._extract_technologies_fallback(text)
+    
+    def _extract_technologies_fallback(self, text: str) -> set:
+        """Fallback: Extract common technologies using basic keyword matching"""
         text_lower = text.lower()
-        found_techs = set()
         
-        # Process patterns in order (priority sorted)
-        for canonical_name, pattern in tech_patterns:
-            if re.search(pattern, text_lower, re.IGNORECASE):
-                found_techs.add(canonical_name)
+        # Common technologies to look for (minimal list)
+        common_techs = {
+            'Python', 'Java', 'JavaScript', 'TypeScript', 'C++', 'C#', 'Go', 'Rust',
+            'React', 'Angular', 'Vue', 'Node.js', 'Django', 'Flask', 'Spring',
+            'SQL', 'PostgreSQL', 'MySQL', 'MongoDB', 'Redis',
+            'AWS', 'Azure', 'GCP', 'Docker', 'Kubernetes',
+            'Git', 'Linux', 'TensorFlow', 'PyTorch'
+        }
+        
+        found_techs = set()
+        for tech in common_techs:
+            # Simple case-insensitive word boundary search
+            if re.search(r'\b' + re.escape(tech.lower()) + r'\b', text_lower):
+                found_techs.add(tech)
         
         return found_techs
     

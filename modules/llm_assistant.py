@@ -8,6 +8,7 @@ import json
 import re
 from typing import Optional, Dict
 from dotenv import load_dotenv
+from .config import load_app_config
 
 # Load environment variables
 load_dotenv()
@@ -25,6 +26,7 @@ class CompensationExtractor:
         """
         self.provider = provider.lower()
         self.client = None
+        self.config = load_app_config()
         self._initialize_client()
 
     def _initialize_client(self):
@@ -39,7 +41,8 @@ class CompensationExtractor:
                         "GEMINI_API_KEY not found in environment variables"
                     )
                 genai.configure(api_key=api_key)
-                self.client = genai.GenerativeModel("gemini-2.0-flash-lite")
+                model_name = self.config.matcher.llm_models.get("gemini_lite", "gemini-2.0-flash-lite")
+                self.client = genai.GenerativeModel(model_name)
                 print("✅ Gemini API initialized")
             except ImportError:
                 raise ImportError(

@@ -19,6 +19,7 @@ from .utils import (
     close_job_details_panel, get_jobs_from_page, sanitize_filename
 )
 from .database import get_db
+from .config import load_app_config
 
 
 class WaterlooWorksApplicator:
@@ -39,11 +40,15 @@ class WaterlooWorksApplicator:
         self.waterlooworks_folder = waterlooworks_folder
         self.use_database = use_database
         
+        # Load config for LLM model names
+        self.config = load_app_config()
+        
         # Initialize Gemini for smart document detection
         api_key = os.getenv("GEMINI_API_KEY")
         if api_key:
             genai.configure(api_key=api_key)
-            self.llm = genai.GenerativeModel("gemini-1.5-flash")
+            model_name = self.config.matcher.llm_models.get("gemini_standard", "gemini-1.5-flash")
+            self.llm = genai.GenerativeModel(model_name)
         else:
             self.llm = None
             print("⚠️  Warning: GEMINI_API_KEY not found. Using regex fallback for document detection.")
@@ -86,14 +91,6 @@ class WaterlooWorksApplicator:
         if success:
             print(f"   ✓ '{self.waterlooworks_folder}' folder opened")
         return success
-
-    def get_pagination_pages(self) -> int:
-        """Get number of pages in the Geese jobs list"""
-        return get_pagination_pages(self.driver)
-
-    def next_page(self):
-        """Go to next page"""
-        go_to_next_page(self.driver)
 
     def get_geese_jobs_from_page(self) -> List[Dict]:
         """Return basic job rows from current Geese page"""
@@ -590,10 +587,6 @@ Be strict: if there's any clear indication of needing to apply elsewhere, flag i
             print(f"      ✗ Error during package/doc step: {e}")
             return False
 
-    def close_job_details_panel(self):
-        """Close the job details panel"""
-        return close_job_details_panel(self.driver)
-
     # ---------- Public entrypoint ----------
     def apply_to_geese_jobs(
         self,
@@ -625,7 +618,7 @@ Be strict: if there's any clear indication of needing to apply elsewhere, flag i
         if not self.navigate_to_geese_jobs():
             return stats
 
-        num_pages = self.get_pagination_pages()
+        num_pages = get_pagination_pages(self.driver)
         total_applied = 0
 
         # Build a quick lookup by id for cached jobs
@@ -635,7 +628,7 @@ Be strict: if there's any clear indication of needing to apply elsewhere, flag i
             jobs = self.get_geese_jobs_from_page()
             if not jobs:
                 if page < num_pages:
-                    self.next_page()
+                    go_to_next_page(self.driver)
                     continue
                 break
 
@@ -757,6 +750,6 @@ Be strict: if there's any clear indication of needing to apply elsewhere, flag i
                 break
             else:
                 print(f"\n➡️  Moving to page {page + 1}...")
-                self.next_page()
+                go_to_next_page(self.driver)
 
         return stats

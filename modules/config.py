@@ -76,6 +76,15 @@ class MatcherSettings:
     @property
     def llm_provider(self) -> str:
         return self.data.get("llm_provider", "gemini")
+    
+    @property
+    def llm_models(self) -> Dict[str, str]:
+        """Get LLM model name mappings"""
+        return self.data.get("llm_models", {
+            "gemini_fast": "gemini-2.0-flash-exp",
+            "gemini_standard": "gemini-1.5-flash",
+            "gemini_lite": "gemini-2.0-flash-lite"
+        })
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(self.data)

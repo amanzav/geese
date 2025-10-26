@@ -8,6 +8,7 @@ collection.
 
 import json
 import os
+import traceback
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -18,6 +19,7 @@ from modules.matcher import ResumeMatcher
 from modules.results_collector import RealTimeResultsCollector
 from modules.config import load_app_config, resolve_waterlooworks_credentials
 from modules.database import get_db
+from modules.utils import get_pagination_pages, go_to_next_page, close_job_details_panel
 
 try:  # Optional import to avoid circular dependencies in non-CLI usage
     from modules.auth import obtain_authenticated_session
@@ -96,7 +98,7 @@ class JobAnalyzer:
         try:
             # Get pagination info
             try:
-                num_pages = scraper.get_pagination_pages()
+                num_pages = get_pagination_pages(resolved_driver)
                 print(f"📄 Total pages to process: {num_pages}\n")
             except Exception:
                 num_pages = 1
@@ -163,7 +165,7 @@ class JobAnalyzer:
                         if decision.message:
                             print(f"           ⏭️  {decision.message}")
                         collector.record_skipped()
-                        scraper.close_job_details_panel()
+                        close_job_details_panel(resolved_driver)
                     elif decision.auto_save:
                         print(f"           💾 Saving to '{folder_name}' folder...", end=" ")
 
@@ -176,14 +178,14 @@ class JobAnalyzer:
                         else:
                             print("❌ Failed")
                             collector.record_skipped()
-                            scraper.close_job_details_panel()
+                            close_job_details_panel(resolved_driver)
 
                         job_data.pop("row_element", None)
                     else:
                         if decision.message:
                             print(f"           ⏭️  {decision.message}")
                         collector.record_skipped()
-                        scraper.close_job_details_panel()
+                        close_job_details_panel(resolved_driver)
 
                     # Store result
                     collector.add_result(result)
@@ -191,14 +193,13 @@ class JobAnalyzer:
                 # Go to next page
                 if page < num_pages:
                     print(f"\n➡️  Moving to page {page + 1}...")
-                    scraper.next_page()
+                    go_to_next_page(resolved_driver)
                     print()
         
         except KeyboardInterrupt:
             print("\n\n⚠️  Process interrupted by user")
         except Exception as e:
             print(f"\n\n❌ Error during processing: {e}")
-            import traceback
             traceback.print_exc()
         
         # Step 3: Save results to files
@@ -374,7 +375,6 @@ class JobAnalyzer:
         
         except Exception as e:
             print(f"❌ Error scraping jobs: {e}")
-            import traceback
             traceback.print_exc()
             
             # Clean up browser on scraping failure
