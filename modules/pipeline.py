@@ -17,6 +17,7 @@ from modules.scraper import WaterlooWorksScraper
 from modules.matcher import ResumeMatcher
 from modules.results_collector import RealTimeResultsCollector
 from modules.config import load_app_config, resolve_waterlooworks_credentials
+from modules.database import get_db
 
 try:  # Optional import to avoid circular dependencies in non-CLI usage
     from modules.auth import obtain_authenticated_session
@@ -27,10 +28,16 @@ except ImportError:  # pragma: no cover - fallback for environments without CLI 
 class JobAnalyzer:
     """Main pipeline for scraping and analyzing WaterlooWorks jobs"""
     
-    def __init__(self, config_path: str = "config.json"):
-        """Initialize analyzer with configuration"""
+    def __init__(self, config_path: str = "config.json", use_database: bool = True):
+        """Initialize analyzer with configuration
+        
+        Args:
+            config_path: Path to config.json
+            use_database: Whether to use database for storage (default: True)
+        """
         self.config = load_app_config(config_path)
-        self.matcher = ResumeMatcher(config=self.config)
+        self.use_database = use_database
+        self.matcher = ResumeMatcher(config=self.config, use_database=use_database)
         self.auth: Optional[WaterlooWorksAuth] = None  # Will be set during scraping
         self.scraper = None  # Will be set during scraping
         self.filter_engine = FilterEngine(self.config)
@@ -290,12 +297,19 @@ class JobAnalyzer:
     ) -> List[Dict]:
         """Scrape jobs from WaterlooWorks with incremental saving"""
         try:
-            # Load existing jobs from cache
+            # Load existing jobs from database or cache
             os.makedirs("data", exist_ok=True)
             cache_path = "data/jobs_scraped.json"
             existing_jobs = {}
 
-            if os.path.exists(cache_path):
+            if self.use_database:
+                # Load from database
+                print("📂 Loading existing jobs from database...")
+                db = get_db()
+                existing_jobs = db.get_jobs_dict()
+                print(f"   Found {len(existing_jobs)} cached jobs\n")
+            elif os.path.exists(cache_path):
+                # Load from JSON file (backwards compatibility)
                 print("📂 Loading existing jobs from cache...")
                 with open(cache_path, 'r', encoding='utf-8') as f:
                     cached = json.load(f)
@@ -323,23 +337,34 @@ class JobAnalyzer:
             # Pass existing jobs and save callback
             def save_callback(jobs):
                 """Called after each page to save progress"""
-                normalized = self._normalize_job_data(jobs)
-                with open(cache_path, 'w', encoding='utf-8') as f:
-                    json.dump(normalized, f, indent=2, ensure_ascii=False)
+                if self.use_database:
+                    # Save to database
+                    db = get_db()
+                    for job in jobs:
+                        db.insert_job(job)
+                else:
+                    # Save to JSON file (backwards compatibility)
+                    normalized = self._normalize_job_data(jobs)
+                    with open(cache_path, 'w', encoding='utf-8') as f:
+                        json.dump(normalized, f, indent=2, ensure_ascii=False)
             
             jobs = scraper.scrape_all_jobs(
                 include_details=detailed,
                 existing_jobs=existing_jobs,
-                save_callback=save_callback,
-                save_every=5  # Save after every 5 new jobs (adjust as needed)
+                save_callback=save_callback if not self.use_database else None,  # Scraper handles DB saves
+                save_every=5,  # Save after every 5 new jobs (adjust as needed)
+                use_database=self.use_database
             )
             
             # DON'T close browser yet if we need to auto-save to folder
             # Browser will be closed at the end of the pipeline
             
             # Final save
-            with open(cache_path, 'w', encoding='utf-8') as f:
-                json.dump(jobs, f, indent=2, ensure_ascii=False)
+            if self.use_database:
+                print(f"✅ All jobs saved to database")
+            else:
+                with open(cache_path, 'w', encoding='utf-8') as f:
+                    json.dump(jobs, f, indent=2, ensure_ascii=False)
             
             print(f"\n✅ Total jobs in cache: {len(jobs)}")
             print(f"   Newly scraped: {len([j for j in jobs if j.get('id') not in existing_jobs])}")
@@ -360,7 +385,11 @@ class JobAnalyzer:
                     print(f"⚠️  Warning: Failed to cleanup browser: {cleanup_error}")
             
             # Try to use cached data
-            if os.path.exists("data/jobs_scraped.json"):
+            if self.use_database:
+                print("📂 Using cached jobs from database...")
+                db = get_db()
+                return db.get_all_jobs()
+            elif os.path.exists("data/jobs_scraped.json"):
                 print("📂 Using cached jobs from previous run...")
                 with open("data/jobs_scraped.json", 'r', encoding='utf-8') as f:
                     return json.load(f)
@@ -465,10 +494,28 @@ class JobAnalyzer:
             print(f"  ❌ Failed to save: {failed_count}/{len(jobs_to_save)}")
     
     def save_results(self, results: List[Dict]):
-        """Save analyzed results to JSON and markdown"""
+        """Save analyzed results to JSON and markdown (and optionally database)"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # Save JSON (full data)
+        # Save to database if enabled
+        if self.use_database:
+            print(f"   💾 Saving results to database...")
+            db = get_db()
+            saved_count = 0
+            for result in results:
+                # Save job if not already saved
+                job = result.get("job", {})
+                if job.get("id"):
+                    db.insert_job(job)
+                
+                # Save match result
+                match = result.get("match", {})
+                if job.get("id") and match:
+                    db.insert_match(job.get("id"), match)
+                    saved_count += 1
+            print(f"   ✅ Saved {saved_count} matches to database")
+        
+        # Save JSON (full data) - optional for backwards compatibility
         json_path = f"data/matches_{timestamp}.json"
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)

@@ -21,12 +21,13 @@ from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 
 from .utils import TIMEOUT, PAGE_LOAD
+from .database import get_db
 
 
 class WaterlooWorksApplicator:
     """Automate job applications on WaterlooWorks from the Geese jobs list."""
 
-    def __init__(self, driver, cover_letters_folder="cover_letters", waterlooworks_folder="geese"):
+    def __init__(self, driver, cover_letters_folder="cover_letters", waterlooworks_folder="geese", use_database=True):
         """
         Initialize applicator
         
@@ -34,10 +35,12 @@ class WaterlooWorksApplicator:
             driver: Selenium WebDriver instance
             cover_letters_folder: Folder containing cover letters (default: "cover_letters")
             waterlooworks_folder: WaterlooWorks folder name (default: "geese")
+            use_database: Whether to track applications in database (default: True)
         """
         self.driver = driver
         self.cover_letters_folder = cover_letters_folder
         self.waterlooworks_folder = waterlooworks_folder
+        self.use_database = use_database
         
         # Initialize Gemini for smart document detection
         api_key = os.getenv("GEMINI_API_KEY")
@@ -47,6 +50,36 @@ class WaterlooWorksApplicator:
         else:
             self.llm = None
             print("⚠️  Warning: GEMINI_API_KEY not found. Using regex fallback for document detection.")
+
+    def track_application(self, job_id: str, status: str = "submitted", cover_letter_path: Optional[str] = None):
+        """Track application in database
+        
+        Args:
+            job_id: WaterlooWorks job ID
+            status: Application status (e.g., "submitted", "draft", "failed")
+            cover_letter_path: Optional path to cover letter file
+        """
+        if not self.use_database:
+            return
+        
+        try:
+            db = get_db()
+            
+            # Track cover letter if provided
+            letter_id = None
+            if cover_letter_path and os.path.exists(cover_letter_path):
+                # Insert cover letter record
+                with open(cover_letter_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                letter_id = db.insert_cover_letter(job_id, content, file_path=cover_letter_path)
+                if status == "submitted":
+                    db.mark_cover_letter_uploaded(letter_id)
+            
+            # Note: Applications table would be inserted here if we had the structure
+            # For now, we're just tracking cover letters
+            
+        except Exception as e:
+            print(f"   ⚠️  Warning: Could not track application in database: {e}")
 
     # ---------- Navigation helpers (borrowed pattern from cover_letter_generator) ----------
     def navigate_to_geese_jobs(self) -> bool:
@@ -443,6 +476,23 @@ Be strict: if there's any clear indication of needing to apply elsewhere, flag i
     def _sanitize_name(self, text: str) -> str:
         return re.sub(r"[^\w\s-]", "", text).strip().replace(" ", "_")
 
+    def _get_cover_letter_path(self, company: str, job_title: str) -> Optional[str]:
+        """Get the full path to the cover letter PDF file
+        
+        Args:
+            company: Company name
+            job_title: Job title
+            
+        Returns:
+            Full path to cover letter PDF if it exists, None otherwise
+        """
+        cover_letter_name = self._cover_letter_name(company, job_title)
+        pdf_path = os.path.join(self.cover_letters_folder, f"{cover_letter_name}.pdf")
+        
+        if os.path.exists(pdf_path):
+            return pdf_path
+        return None
+
         def _cover_letter_name(self, company: str, job_title: str) -> str:
                 """Build expected cover letter document name matching the generator's sanitization.
 
@@ -787,6 +837,10 @@ Be strict: if there's any clear indication of needing to apply elsewhere, flag i
                 stats["applied"] += 1
                 if ext_flag:
                     stats["external_required"].append((job_id, company, title, ext_hint))
+                
+                # Track application in database
+                cover_letter_path = self._get_cover_letter_path(company, title)
+                self.track_application(job_id, status="submitted", cover_letter_path=cover_letter_path)
 
                 # Close the tab and switch back to main window
                 if apply_ctx.get("switched") and apply_ctx.get("prev_handle"):

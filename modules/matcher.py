@@ -13,6 +13,7 @@ except ImportError:  # pragma: no cover - handled in _extract_bullets_from_pdf
     PdfReader = None
 
 from modules.config import AppConfig, load_app_config
+from modules.database import get_db
 
 if TYPE_CHECKING:  # pragma: no cover - only for static typing
     from modules.embeddings import EmbeddingsManager
@@ -28,8 +29,17 @@ class ResumeMatcher:
         config_path: str = "config.json",
         cache_path: Optional[str] = None,
         resume_cache_path: Optional[str] = None,
+        use_database: bool = True,
     ):
-        """Initialize matcher with configuration."""
+        """Initialize matcher with configuration.
+        
+        Args:
+            config: Optional AppConfig instance
+            config_path: Path to config.json
+            cache_path: Path to JSON cache file (for backwards compatibility)
+            resume_cache_path: Path to resume cache file
+            use_database: Whether to use database for caching (default: True)
+        """
 
         self.config = config or load_app_config(config_path)
         self.matcher_config = self.config.matcher
@@ -37,13 +47,14 @@ class ResumeMatcher:
         # Cache paths
         self.cache_path = cache_path or "data/job_matches_cache.json"
         self.resume_cache_path = resume_cache_path or "data/resume_parsed.txt"
+        self.use_database = use_database
 
         # Internal state
         self._resume_bullets: Optional[List[str]] = None
         self._embeddings_manager: Optional["EmbeddingsManager"] = None
         self._resume_index_prepared = False
 
-        # Load match cache
+        # Load match cache from database or JSON file
         self.match_cache = self._load_match_cache()
         print(f"📦 Loaded {len(self.match_cache)} cached job matches\n")
     
@@ -69,11 +80,28 @@ class ResumeMatcher:
             return {}
 
     def _load_match_cache(self) -> Dict[str, Dict]:
-        """Load match cache from disk."""
-        return self._read_match_cache_from_disk()
+        """Load match cache from database or disk."""
+        if self.use_database:
+            # Load from database
+            db = get_db()
+            return db.get_all_matches()
+        else:
+            # Load from JSON file (backwards compatibility)
+            return self._read_match_cache_from_disk()
 
     def _save_match_cache(self):
-        """Save match cache to disk"""
+        """Save match cache to database or disk"""
+        if self.use_database:
+            # Save to database
+            db = get_db()
+            for job_id, match_data in self.match_cache.items():
+                db.insert_match(job_id, match_data)
+        else:
+            # Save to JSON file (backwards compatibility)
+            self._save_match_cache_to_disk()
+    
+    def _save_match_cache_to_disk(self):
+        """Save match cache to JSON file (backwards compatibility)"""
         try:
             dirpath = os.path.dirname(self.cache_path) if self.cache_path else ""
             if dirpath:

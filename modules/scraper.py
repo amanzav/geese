@@ -9,6 +9,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from .utils import TIMEOUT, PAGE_LOAD, get_cell_text, calculate_chances
 from .llm_assistant import CompensationExtractor
+from .database import get_db
 
 
 class WaterlooWorksScraper:
@@ -463,6 +464,7 @@ class WaterlooWorksScraper:
         existing_jobs=None,
         save_callback=None,
         save_every=5,
+        use_database=True,
     ):
         """Scrape all jobs from all pages with incremental saving
 
@@ -471,9 +473,15 @@ class WaterlooWorksScraper:
             existing_jobs: Dict of {job_id: job_data} to skip already-scraped jobs
             save_callback: Function called periodically with accumulated jobs
             save_every: Save after this many new jobs scraped (default: 5)
+            use_database: Whether to save to database (default: True)
         """
         if existing_jobs is None:
-            existing_jobs = {}
+            # Load from database if not provided
+            if use_database:
+                db = get_db()
+                existing_jobs = db.get_jobs_dict()
+            else:
+                existing_jobs = {}
 
         print("🔍 Starting full job scrape...\n")
         all_jobs = []
@@ -498,8 +506,12 @@ class WaterlooWorksScraper:
             )
             all_jobs.extend(jobs)
 
-            # Save progress after each page (in case save_every wasn't triggered)
-            if save_callback:
+            # Save to database after each page
+            if use_database and jobs:
+                saved = self.save_jobs_to_database(jobs)
+                print(f"💾 Saved {saved} jobs to database\n")
+            # Also call save_callback if provided (for backwards compatibility)
+            elif save_callback:
                 print(f"💾 Saving page progress ({len(all_jobs)} jobs total)...\n")
                 save_callback(all_jobs)
 
@@ -509,6 +521,10 @@ class WaterlooWorksScraper:
                 self.next_page()
 
         print(f"\n🎉 Total jobs scraped: {len(all_jobs)}")
+        
+        if use_database:
+            print(f"✅ All jobs saved to database\n")
+        
         return all_jobs
 
     def get_pagination_pages(self):
@@ -527,3 +543,21 @@ class WaterlooWorksScraper:
         next_button = pagination.find_elements(By.TAG_NAME, "li")[-2]
         next_button.find_element(By.TAG_NAME, "a").click()
         time.sleep(PAGE_LOAD)
+
+    def save_jobs_to_database(self, jobs):
+        """Save scraped jobs to SQLite database
+        
+        Args:
+            jobs: List of job dictionaries to save
+            
+        Returns:
+            int: Number of jobs successfully saved
+        """
+        db = get_db()
+        saved_count = 0
+        
+        for job in jobs:
+            if db.insert_job(job):
+                saved_count += 1
+        
+        return saved_count
