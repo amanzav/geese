@@ -493,10 +493,13 @@ class JobAnalyzer:
         if failed_count > 0:
             print(f"  ❌ Failed to save: {failed_count}/{len(jobs_to_save)}")
     
-    def save_results(self, results: List[Dict]):
-        """Save analyzed results to JSON and markdown (and optionally database)"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    def save_results(self, results: List[Dict], save_files: bool = False):
+        """Save analyzed results to database (and optionally JSON/markdown for backwards compatibility)
         
+        Args:
+            results: List of job match results
+            save_files: If True, also save JSON and markdown files (default: False, use database only)
+        """
         # Save to database if enabled
         if self.use_database:
             print(f"   💾 Saving results to database...")
@@ -515,16 +518,20 @@ class JobAnalyzer:
                     saved_count += 1
             print(f"   ✅ Saved {saved_count} matches to database")
         
-        # Save JSON (full data) - optional for backwards compatibility
-        json_path = f"data/matches_{timestamp}.json"
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
-        print(f"   📄 JSON saved to {json_path}")
-        
-        # Save Markdown report (human-readable)
-        md_path = f"data/matches_{timestamp}.md"
-        self._generate_markdown_report(results, md_path)
-        print(f"   📄 Report saved to {md_path}")
+        # Optional: Save JSON and markdown files for backwards compatibility
+        if save_files:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Save JSON (full data)
+            json_path = f"data/matches_{timestamp}.json"
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(results, f, indent=2, ensure_ascii=False)
+            print(f"   📄 JSON saved to {json_path}")
+            
+            # Save Markdown report
+            md_path = f"data/matches_{timestamp}.md"
+            self._generate_markdown_report(results, md_path)
+            print(f"   📄 Report saved to {md_path}")
     
     def _generate_markdown_report(self, results: List[Dict], filepath: str):
         """Generate a nice markdown report of matches"""
