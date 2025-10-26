@@ -6,10 +6,12 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from .utils import (
-    TIMEOUT, PAGE_LOAD, SELECTORS,
+    TIMEOUT, PAGE_LOAD, SELECTORS, WaitTimes,
     get_cell_text, calculate_chances,
     get_pagination_pages, go_to_next_page,
-    close_job_details_panel
+    close_job_details_panel,
+    smart_page_wait, click_and_wait, smart_element_click, fast_presence_check,
+    timer
 )
 from .llm_assistant import CompensationExtractor
 from .database import get_db
@@ -30,52 +32,63 @@ class WaterlooWorksScraper:
         self.compensation_extractor = None
 
     def go_to_jobs_page(self):
-        """Navigate to jobs page and apply optional program filter"""
+        """Navigate to jobs page and apply optional program filter - OPTIMIZED"""
         print("📋 Navigating to jobs page...")
 
         self.driver.get(
             "https://waterlooworks.uwaterloo.ca/myAccount/co-op/full/jobs.htm"
         )
-        time.sleep(PAGE_LOAD)
+        
+        # Smart wait for page load
+        smart_page_wait(self.driver, (By.CSS_SELECTOR, ".doc-viewer--filter-bar button"))
 
         print("🔘 Clicking initial filter button...")
-        filter_button = WebDriverWait(self.driver, TIMEOUT).until(
-            EC.presence_of_element_located(
-                (By.CSS_SELECTOR, ".doc-viewer--filter-bar button")
-            )
+        filter_button = fast_presence_check(
+            self.driver, 
+            ".doc-viewer--filter-bar button"
         )
-        filter_button.click()
-        time.sleep(PAGE_LOAD)
+        if filter_button:
+            click_and_wait(
+                self.driver, 
+                filter_button,
+                wait_for=(By.CSS_SELECTOR, ".btn__default.btn--black.tag-rail__menu-btn"),
+                max_wait=WaitTimes.MEDIUM
+            )
+        else:
+            print("   ⚠️  Filter button not found")
+            return
 
-        # Apply program filter if provided
+        # Apply program filter
         print(f"🎯 Applying program filter...")
 
-        filter_menu_button = WebDriverWait(self.driver, TIMEOUT).until(
-            EC.element_to_be_clickable(
-                (By.CSS_SELECTOR, ".btn__default.btn--black.tag-rail__menu-btn")
-            )
+        filter_menu_button = fast_presence_check(
+            self.driver,
+            ".btn__default.btn--black.tag-rail__menu-btn"
         )
-        filter_menu_button.click()
-        time.sleep(PAGE_LOAD)
+        if filter_menu_button:
+            click_and_wait(
+                self.driver,
+                filter_menu_button,
+                wait_for=(By.CSS_SELECTOR, ".color--bg--white.doc-viewer input"),
+                max_wait=WaitTimes.MEDIUM
+            )
 
         # Find and click the program checkbox
-        program_checkbox = WebDriverWait(self.driver, TIMEOUT).until(
-            EC.presence_of_element_located(
-                (By.CSS_SELECTOR, ".color--bg--white.doc-viewer input")
-            )
+        program_checkbox = fast_presence_check(
+            self.driver,
+            ".color--bg--white.doc-viewer input"
         )
-        self.driver.execute_script("arguments[0].click();", program_checkbox)
-        time.sleep(PAGE_LOAD)
+        if program_checkbox:
+            smart_element_click(self.driver, program_checkbox, scroll_first=False)
 
-        # Close the sidebar by re-finding and clicking the filter button again
+        # Close the sidebar
         print("🔘 Closing filter sidebar...")
-        filter_button_close = WebDriverWait(self.driver, TIMEOUT).until(
-            EC.element_to_be_clickable(
-                (By.CSS_SELECTOR, ".btn__default.btn--black.tag-rail__menu-btn")
-            )
+        filter_button_close = fast_presence_check(
+            self.driver,
+            ".btn__default.btn--black.tag-rail__menu-btn"
         )
-        filter_button_close.click()
-        time.sleep(PAGE_LOAD)
+        if filter_button_close:
+            click_and_wait(self.driver, filter_button_close, max_wait=WaitTimes.FAST)
 
         print("✅ Program filter applied\n")
 
@@ -133,34 +146,35 @@ class WaterlooWorksScraper:
             return None
 
     def get_job_details(self, job_data):
-        """Click into a job and extract full description details"""
+        """Click into a job and extract full description details - OPTIMIZED"""
         try:
             row = job_data.get("row_element")
             if not row:
                 return job_data
 
-            # Find and click the job link
-            link = WebDriverWait(row, 10).until(
-                EC.visibility_of_element_located((By.TAG_NAME, "a"))
-            )
+            # Find and click the job link with optimized scrolling
+            link = fast_presence_check(row, "a", by=By.TAG_NAME, timeout=WaitTimes.MEDIUM)
+            if not link:
+                print("   ⚠️  Job link not found")
+                return job_data
+            
+            # Smart click with single scroll
+            smart_element_click(self.driver, link)
 
-            # Scroll into view and adjust position to avoid click interception
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", link)
-            time.sleep(0.2)
-            self.driver.execute_script("window.scrollBy(0, -100);")
-            time.sleep(0.2)
-            link.click()
-
-            # Wait for job details panel to load
-            job_info = WebDriverWait(self.driver, 10).until(
+            # Fast wait for job details panel (poll every 50ms)
+            job_info = WebDriverWait(self.driver, WaitTimes.SLOW, poll_frequency=0.05).until(
                 EC.presence_of_element_located((By.CLASS_NAME, "is--long-form-reading"))
             )
-            WebDriverWait(self.driver, 10).until(
+            
+            # Fast wait for question containers (poll every 50ms)
+            WebDriverWait(self.driver, WaitTimes.SLOW, poll_frequency=0.05).until(
                 EC.presence_of_element_located(
                     (By.CLASS_NAME, "js--question--container")
                 )
             )
-            time.sleep(2)
+            
+            # Minimal wait for dynamic content
+            time.sleep(WaitTimes.FAST)
 
             # Extract description sections
             job_divs = job_info.find_elements(By.CLASS_NAME, "js--question--container")
@@ -415,8 +429,10 @@ class WaterlooWorksScraper:
                             f"  → Getting details for job {i}/{len(rows)}: {job_data.get('title', 'Unknown')}"
                         )
                         job_data = self.get_job_details(job_data)
-                        # Close the panel after getting details (batch mode)
-                        close_job_details_panel(self.driver)
+                        # Fast panel close - no waiting for animation
+                        close_buttons = self.driver.find_elements(By.CSS_SELECTOR, SELECTORS["close_panel_button"])
+                        if close_buttons:
+                            smart_element_click(self.driver, close_buttons[-1], scroll_first=False)
                     else:
                         # Remove row_element if not getting details
                         if "row_element" in job_data:
@@ -461,43 +477,46 @@ class WaterlooWorksScraper:
                 existing_jobs = {}
 
         print("🔍 Starting full job scrape...\n")
-        all_jobs = []
-
-        # Check for pagination
-        try:
-            num_pages = get_pagination_pages(self.driver)
-            print(f"📄 Total pages: {num_pages}\n")
-        except Exception:
-            print("📄 Single page (no pagination)\n")
-            num_pages = 1
-
-        # Scrape all pages
-        for page in range(1, num_pages + 1):
-            print(f"📄 Scraping page {page}/{num_pages}...")
-            jobs = self.scrape_current_page(
-                include_details=include_details,
-                existing_jobs=existing_jobs,
-                all_jobs=all_jobs,
-                save_every=save_every,
-            )
-            all_jobs.extend(jobs)
-
-            # Save to database after each page
-            if use_database and jobs:
-                saved = self.save_jobs_to_database(jobs)
-                print(f"💾 Saved {saved} jobs to database\n")
-
-            # Go to next page if not the last one
-            if page < num_pages:
-                print(f"➡️  Going to page {page + 1}...\n")
-                go_to_next_page(self.driver)
-
-        print(f"\n🎉 Total jobs scraped: {len(all_jobs)}")
         
-        if use_database:
-            print(f"✅ All jobs saved to database\n")
-        
-        return all_jobs
+        with timer("Full scrape"):
+            all_jobs = []
+
+            # Check for pagination
+            try:
+                num_pages = get_pagination_pages(self.driver)
+                print(f"📄 Total pages: {num_pages}\n")
+            except Exception:
+                print("📄 Single page (no pagination)\n")
+                num_pages = 1
+
+            # Scrape all pages
+            for page in range(1, num_pages + 1):
+                with timer(f"Page {page}/{num_pages}"):
+                    print(f"📄 Scraping page {page}/{num_pages}...")
+                    jobs = self.scrape_current_page(
+                        include_details=include_details,
+                        existing_jobs=existing_jobs,
+                        all_jobs=all_jobs,
+                        save_every=save_every,
+                    )
+                    all_jobs.extend(jobs)
+
+                    # Save to database after each page
+                    if use_database and jobs:
+                        saved = self.save_jobs_to_database(jobs)
+                        print(f"💾 Saved {saved} jobs to database\n")
+
+                # Go to next page if not the last one
+                if page < num_pages:
+                    print(f"➡️  Going to page {page + 1}...\n")
+                    go_to_next_page(self.driver)
+
+            print(f"\n🎉 Total jobs scraped: {len(all_jobs)}")
+            
+            if use_database:
+                print(f"✅ All jobs saved to database\n")
+            
+            return all_jobs
 
     def save_jobs_to_database(self, jobs):
         """Save scraped jobs to SQLite database
