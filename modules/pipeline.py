@@ -298,9 +298,8 @@ class JobAnalyzer:
     ) -> List[Dict]:
         """Scrape jobs from WaterlooWorks with incremental saving"""
         try:
-            # Load existing jobs from database or cache
+            # Load existing jobs from database
             os.makedirs("data", exist_ok=True)
-            cache_path = "data/jobs_scraped.json"
             existing_jobs = {}
 
             if self.use_database:
@@ -309,14 +308,6 @@ class JobAnalyzer:
                 db = get_db()
                 existing_jobs = db.get_jobs_dict()
                 print(f"   Found {len(existing_jobs)} cached jobs\n")
-            elif os.path.exists(cache_path):
-                # Load from JSON file (backwards compatibility)
-                print("📂 Loading existing jobs from cache...")
-                with open(cache_path, 'r', encoding='utf-8') as f:
-                    cached = json.load(f)
-                    # Build a dict for fast lookup by job ID
-                    existing_jobs = {job['id']: job for job in cached if 'id' in job}
-                    print(f"   Found {len(existing_jobs)} cached jobs\n")
 
             if auth:
                 print("🔐 Using existing WaterlooWorks session")
@@ -335,37 +326,17 @@ class JobAnalyzer:
             self.scraper = scraper  # Store for later use
             scraper.go_to_jobs_page()
             
-            # Pass existing jobs and save callback
-            def save_callback(jobs):
-                """Called after each page to save progress"""
-                if self.use_database:
-                    # Save to database
-                    db = get_db()
-                    for job in jobs:
-                        db.insert_job(job)
-                else:
-                    # Save to JSON file (backwards compatibility)
-                    normalized = self._normalize_job_data(jobs)
-                    with open(cache_path, 'w', encoding='utf-8') as f:
-                        json.dump(normalized, f, indent=2, ensure_ascii=False)
-            
+            # Scraper handles database saves automatically
             jobs = scraper.scrape_all_jobs(
                 include_details=detailed,
                 existing_jobs=existing_jobs,
-                save_callback=save_callback if not self.use_database else None,  # Scraper handles DB saves
-                save_every=5,  # Save after every 5 new jobs (adjust as needed)
+                save_callback=None,  # Not needed, scraper uses database
+                save_every=5,
                 use_database=self.use_database
             )
             
             # DON'T close browser yet if we need to auto-save to folder
             # Browser will be closed at the end of the pipeline
-            
-            # Final save
-            if self.use_database:
-                print(f"✅ All jobs saved to database")
-            else:
-                with open(cache_path, 'w', encoding='utf-8') as f:
-                    json.dump(jobs, f, indent=2, ensure_ascii=False)
             
             print(f"\n✅ Total jobs in cache: {len(jobs)}")
             print(f"   Newly scraped: {len([j for j in jobs if j.get('id') not in existing_jobs])}")
@@ -384,15 +355,11 @@ class JobAnalyzer:
                 except Exception as cleanup_error:
                     print(f"⚠️  Warning: Failed to cleanup browser: {cleanup_error}")
             
-            # Try to use cached data
+            # Try to use cached data from database
             if self.use_database:
                 print("📂 Using cached jobs from database...")
                 db = get_db()
                 return db.get_all_jobs()
-            elif os.path.exists("data/jobs_scraped.json"):
-                print("📂 Using cached jobs from previous run...")
-                with open("data/jobs_scraped.json", 'r', encoding='utf-8') as f:
-                    return json.load(f)
             
             return []
 
@@ -493,14 +460,13 @@ class JobAnalyzer:
         if failed_count > 0:
             print(f"  ❌ Failed to save: {failed_count}/{len(jobs_to_save)}")
     
-    def save_results(self, results: List[Dict], save_files: bool = False):
-        """Save analyzed results to database (and optionally JSON/markdown for backwards compatibility)
+    def save_results(self, results: List[Dict]):
+        """Save analyzed results to database
         
         Args:
             results: List of job match results
-            save_files: If True, also save JSON and markdown files (default: False, use database only)
         """
-        # Save to database if enabled
+        # Save to database
         if self.use_database:
             print(f"   💾 Saving results to database...")
             db = get_db()
@@ -517,101 +483,6 @@ class JobAnalyzer:
                     db.insert_match(job.get("id"), match)
                     saved_count += 1
             print(f"   ✅ Saved {saved_count} matches to database")
-        
-        # Optional: Save JSON and markdown files for backwards compatibility
-        if save_files:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            # Save JSON (full data)
-            json_path = f"data/matches_{timestamp}.json"
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(results, f, indent=2, ensure_ascii=False)
-            print(f"   📄 JSON saved to {json_path}")
-            
-            # Save Markdown report
-            md_path = f"data/matches_{timestamp}.md"
-            self._generate_markdown_report(results, md_path)
-            print(f"   📄 Report saved to {md_path}")
-    
-    def _generate_markdown_report(self, results: List[Dict], filepath: str):
-        """Generate a nice markdown report of matches"""
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write("# WaterlooWorks Job Matches Report\n\n")
-            f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            f.write(f"**Total Jobs Analyzed:** {len(results)}\n\n")
-            f.write("---\n\n")
-            
-            # Group by score ranges
-            excellent = [r for r in results if r["match"]["fit_score"] >= 70]
-            good = [r for r in results if 50 <= r["match"]["fit_score"] < 70]
-            moderate = [r for r in results if 30 <= r["match"]["fit_score"] < 50]
-            
-            f.write(f"## Summary\n\n")
-            f.write(f"- 🟢 **Excellent Matches (70+):** {len(excellent)}\n")
-            f.write(f"- 🟡 **Good Matches (50-69):** {len(good)}\n")
-            f.write(f"- 🟠 **Moderate Matches (30-49):** {len(moderate)}\n\n")
-            f.write("---\n\n")
-            
-            # Write each job
-            for i, result in enumerate(results, 1):
-                job = result["job"]
-                match = result["match"]
-                
-                # Emoji based on score
-                if match["fit_score"] >= 70:
-                    emoji = "🟢"
-                elif match["fit_score"] >= 50:
-                    emoji = "🟡"
-                elif match["fit_score"] >= 30:
-                    emoji = "🟠"
-                else:
-                    emoji = "🔴"
-                
-                f.write(f"## {emoji} #{i} - {job.get('title', 'Unknown')} ({match['fit_score']}/100)\n\n")
-                f.write(f"**Company:** {job.get('company', 'N/A')}\n\n")
-                f.write(f"**Location:** {job.get('location', 'N/A')}\n\n")
-                
-                # Match breakdown
-                f.write(f"**Match Breakdown:**\n")
-                f.write(f"- Keyword Match: {match.get('keyword_match', 0)}%\n")
-                f.write(f"- Semantic Coverage: {match['coverage']}%\n")
-                f.write(f"- Semantic Strength: {match['skill_match']}%\n")
-                f.write(f"- Seniority Alignment: {match['seniority_alignment']}%\n\n")
-                
-                # Technology matching
-                if match.get("matched_technologies"):
-                    f.write(f"**✅ Matched Technologies ({len(match['matched_technologies'])}):**\n")
-                    f.write(", ".join(match["matched_technologies"]) + "\n\n")
-                
-                if match.get("missing_technologies"):
-                    f.write(f"**❌ Missing Technologies ({len(match['missing_technologies'])}):**\n")
-                    f.write(", ".join(match["missing_technologies"]) + "\n\n")
-                
-                # Matched bullets
-                if match.get("matched_bullets"):
-                    f.write(f"**Your Relevant Experience ({len(match['matched_bullets'])} bullets):**\n\n")
-                    for bullet in match["matched_bullets"][:5]:  # Top 5
-                        f.write(f"- [{bullet['similarity']:.2f}] {bullet['text']}\n")
-                    f.write("\n")
-                
-                # Job details
-                if job.get("summary") or job.get("responsibilities"):
-                    f.write(f"**Job Details:**\n\n")
-                    if job.get("summary") and job["summary"] != "N/A":
-                        f.write(f"{job['summary'][:300]}...\n\n")
-                    if job.get("responsibilities") and job["responsibilities"] != "N/A":
-                        f.write(f"**Responsibilities:** {job['responsibilities'][:200]}...\n\n")
-                
-                # Work arrangements
-                if job.get("employment_location_arrangement") and job["employment_location_arrangement"] != "N/A":
-                    f.write(f"**Location Arrangement:** {job['employment_location_arrangement']}\n\n")
-                if job.get("work_term_duration") and job["work_term_duration"] != "N/A":
-                    f.write(f"**Work Term:** {job['work_term_duration']}\n\n")
-                
-                if job.get("url"):
-                    f.write(f"**Apply:** {job['url']}\n\n")
-                
-                f.write("---\n\n")
     
     def show_summary(self, results: List[Dict]):
         """Show summary in terminal"""

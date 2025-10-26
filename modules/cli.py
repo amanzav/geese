@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from typing import Optional, Sequence, TYPE_CHECKING
 
@@ -39,11 +38,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Automatically save high-scoring jobs to WaterlooWorks folder",
     )
-    parser.add_argument(
-        "--jobs-path",
-        default="data/jobs_scraped.json",
-        help="Path to cached jobs JSON used by analyze mode.",
-    )
     return parser
 
 
@@ -74,7 +68,7 @@ def run_cli(argv: Optional[Sequence[str]] = None, analyzer: Optional["JobAnalyze
         return
 
     if args.mode == "analyze":
-        _run_analyze_mode(analyzer, args.jobs_path, args.force_rematch)
+        _run_analyze_mode(analyzer, args.force_rematch)
         return
 
     if args.mode == "cover-letter":
@@ -96,15 +90,18 @@ def run_cli(argv: Optional[Sequence[str]] = None, analyzer: Optional["JobAnalyze
     raise ValueError(f"Unsupported mode: {args.mode}")
 
 
-def _run_analyze_mode(analyzer: "JobAnalyzer", jobs_path: str, force_rematch: bool) -> None:
-    print("📂 Using cached jobs...")
-    if not os.path.exists(jobs_path):
-        raise FileNotFoundError(f"Cached jobs not found at {jobs_path}")
+def _run_analyze_mode(analyzer: "JobAnalyzer", force_rematch: bool) -> None:
+    print("📂 Using cached jobs from database...")
+    
+    from modules.database import get_db
+    db = get_db()
+    jobs = db.get_all_jobs()
+    
+    if not jobs:
+        print("❌ No jobs found in database. Run 'python main.py --mode batch' to scrape jobs first.")
+        return
 
-    with open(jobs_path, "r", encoding="utf-8") as handle:
-        jobs = json.load(handle)
-
-    print(f"✅ Loaded {len(jobs)} jobs from cache\n")
+    print(f"✅ Loaded {len(jobs)} jobs from database\n")
     print("🔍 Analyzing jobs...")
     if force_rematch:
         print("⚠️  Force rematch enabled - ignoring cache")

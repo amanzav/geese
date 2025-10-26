@@ -29,7 +29,6 @@ class ResumeMatcher:
         config: Optional[AppConfig] = None,
         *,
         config_path: str = "config.json",
-        cache_path: Optional[str] = None,
         resume_cache_path: Optional[str] = None,
         use_database: bool = True,
     ):
@@ -38,7 +37,6 @@ class ResumeMatcher:
         Args:
             config: Optional AppConfig instance
             config_path: Path to config.json
-            cache_path: Path to JSON cache file (for backwards compatibility)
             resume_cache_path: Path to resume cache file
             use_database: Whether to use database for caching (default: True)
         """
@@ -47,7 +45,6 @@ class ResumeMatcher:
         self.matcher_config = self.config.matcher
 
         # Cache paths
-        self.cache_path = cache_path or "data/job_matches_cache.json"
         self.resume_cache_path = resume_cache_path or "data/resume_parsed.txt"
         self.use_database = use_database
 
@@ -57,66 +54,28 @@ class ResumeMatcher:
         self._resume_index_prepared = False
         self._agent_factory = None  # Lazy-load agent factory for keyword extraction
 
-        # Load match cache from database or JSON file
+        # Load match cache from database
         self.match_cache = self._load_match_cache()
         print(f"📦 Loaded {len(self.match_cache)} cached job matches\n")
     
-    def _read_match_cache_from_disk(self) -> Dict[str, Dict]:
-        """Load cached match results from disk"""
-        if not self.cache_path or self.cache_path == ":memory:":
-            return {}
-
-        if not os.path.exists(self.cache_path):
-            return {}
-
-        try:
-            with open(self.cache_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            print(f"⚠️  Error parsing match cache JSON: {e}")
-            print(f"   Cache file may be corrupted. Starting with empty cache.")
-            return {}
-        except Exception as e:
-            print(f"⚠️  Error loading match cache: {e}")
-            traceback.print_exc()
-            return {}
-
     def _load_match_cache(self) -> Dict[str, Dict]:
-        """Load match cache from database or disk."""
-        if self.use_database:
-            # Load from database
-            db = get_db()
-            return db.get_all_matches()
-        else:
-            # Load from JSON file (backwards compatibility)
-            return self._read_match_cache_from_disk()
+        """Load match cache from database."""
+        if not self.use_database:
+            return {}
+        
+        # Load from database
+        db = get_db()
+        return db.get_all_matches()
 
     def _save_match_cache(self):
-        """Save match cache to database or disk"""
-        if self.use_database:
-            # Save to database
-            db = get_db()
-            for job_id, match_data in self.match_cache.items():
-                db.insert_match(job_id, match_data)
-        else:
-            # Save to JSON file (backwards compatibility)
-            self._save_match_cache_to_disk()
-    
-    def _save_match_cache_to_disk(self):
-        """Save match cache to JSON file (backwards compatibility)"""
-        try:
-            dirpath = os.path.dirname(self.cache_path) if self.cache_path else ""
-            if dirpath:
-                os.makedirs(dirpath, exist_ok=True)
-            if self.cache_path and self.cache_path != ":memory:":
-                with open(self.cache_path, 'w', encoding='utf-8') as f:
-                    json.dump(self.match_cache, f, indent=2, ensure_ascii=False)
-        except PermissionError as e:
-            print(f"⚠️  Permission denied saving match cache: {e}")
-            print(f"   Check write permissions for: {self.cache_path}")
-        except Exception as e:
-            print(f"⚠️  Error saving match cache: {e}")
-            traceback.print_exc()
+        """Save match cache to database"""
+        if not self.use_database:
+            return
+        
+        # Save to database
+        db = get_db()
+        for job_id, match_data in self.match_cache.items():
+            db.insert_match(job_id, match_data)
     
     def _get_cached_match(self, job_id: str) -> Optional[Dict]:
         """Get cached match result for a job ID"""

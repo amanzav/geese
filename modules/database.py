@@ -11,19 +11,104 @@ from typing import List, Dict, Optional, Any
 from contextlib import contextmanager
 
 
+# Schema version - increment this when making schema changes
+CURRENT_SCHEMA_VERSION = 1
+
+
 class Database:
     """SQLite database manager for Geese"""
 
     def __init__(self, db_path: str = "data/geese.db"):
         self.db_path = db_path
         self._ensure_db_exists()
+        self._check_and_migrate_schema()
 
     def _ensure_db_exists(self):
         """Initialize database if it doesn't exist"""
         db_file = Path(self.db_path)
         if not db_file.exists():
-            print(f"⚠️  Database not found at {self.db_path}")
-            print("   Run 'python scripts/migrate_to_sqlite.py' to create it")
+            print(f"📦 Database not found. Initializing new database at {self.db_path}...")
+            self._initialize_schema()
+            print(f"✅ Database initialized successfully!")
+    
+    def _initialize_schema(self):
+        """Create database schema from schema.sql"""
+        # Create data directory if it doesn't exist
+        db_file = Path(self.db_path)
+        db_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Read schema file
+        schema_path = Path(__file__).parent.parent / "data" / "schema.sql"
+        if not schema_path.exists():
+            raise FileNotFoundError(
+                f"Schema file not found at {schema_path}. "
+                "Cannot initialize database without schema."
+            )
+        
+        with open(schema_path, 'r', encoding='utf-8') as f:
+            schema = f.read()
+        
+        # Execute schema
+        with self.get_connection() as conn:
+            conn.executescript(schema)
+        
+        # Set initial schema version
+        self.set_schema_version(CURRENT_SCHEMA_VERSION)
+    
+    def _check_and_migrate_schema(self):
+        """Check schema version and apply migrations if needed"""
+        current_version = self.get_schema_version()
+        
+        if current_version < CURRENT_SCHEMA_VERSION:
+            print(f"📦 Database schema outdated (v{current_version}). Upgrading to v{CURRENT_SCHEMA_VERSION}...")
+            self._apply_migrations(current_version)
+            print(f"✅ Database upgraded successfully!")
+        elif current_version > CURRENT_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Database schema version (v{current_version}) is newer than application version (v{CURRENT_SCHEMA_VERSION}). "
+                "Please update the application."
+            )
+    
+    def get_schema_version(self) -> int:
+        """Get current database schema version"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT cache_value FROM cache_metadata WHERE cache_key = 'schema_version'")
+                result = cursor.fetchone()
+                return int(result[0]) if result else 0
+        except sqlite3.OperationalError:
+            # Table doesn't exist yet (very first run)
+            return 0
+    
+    def set_schema_version(self, version: int):
+        """Set database schema version"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO cache_metadata (cache_key, cache_value, updated_at)
+                VALUES ('schema_version', ?, ?)
+            ''', (str(version), datetime.now().isoformat()))
+    
+    def _apply_migrations(self, from_version: int):
+        """Apply incremental schema migrations"""
+        # Apply migrations sequentially
+        for version in range(from_version + 1, CURRENT_SCHEMA_VERSION + 1):
+            print(f"   Applying migration: v{version-1} → v{version}")
+            
+            if version == 1:
+                # Migration to v1 (initial schema)
+                # This shouldn't be needed since _initialize_schema handles it
+                pass
+            
+            # Future migrations go here:
+            # elif version == 2:
+            #     with self.get_connection() as conn:
+            #         conn.execute("ALTER TABLE jobs ADD COLUMN new_field TEXT")
+            #     self.set_schema_version(2)
+            
+            # Update version after each migration
+            self.set_schema_version(version)
 
     @contextmanager
     def get_connection(self):

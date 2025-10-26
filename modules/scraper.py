@@ -376,7 +376,6 @@ class WaterlooWorksScraper:
         self,
         include_details=False,
         existing_jobs=None,
-        save_callback=None,
         all_jobs=None,
         save_every=5,
     ):
@@ -385,7 +384,6 @@ class WaterlooWorksScraper:
         Args:
             include_details: Whether to deep scrape job details
             existing_jobs: Dict of {job_id: job_data} to skip already-scraped jobs
-            save_callback: Function to call for incremental saves
             all_jobs: Accumulated list of all jobs (for incremental saves)
             save_every: Save after this many new jobs scraped (default: 5)
         """
@@ -427,17 +425,14 @@ class WaterlooWorksScraper:
                     new_jobs_count += 1
 
                     # Incremental save after every N new jobs
-                    if (
-                        save_callback
-                        and save_every > 0
-                        and new_jobs_count % save_every == 0
-                    ):
-                        all_jobs.extend(jobs)
-                        jobs = []
+                    if save_every > 0 and new_jobs_count % save_every == 0:
+                        # Save to database
+                        from modules.database import get_db
+                        db = get_db()
+                        saved = self.save_jobs_to_database(jobs[-save_every:])
                         print(
-                            f"  💾 Auto-saving progress ({len(all_jobs)} jobs total)..."
+                            f"  💾 Auto-saved {saved} jobs ({len(all_jobs) + len(jobs)} total)..."
                         )
-                        save_callback(all_jobs)
 
         print(f"✅ Parsed {len(jobs)} jobs from this page ({new_jobs_count} new)\n")
         return jobs
@@ -446,16 +441,14 @@ class WaterlooWorksScraper:
         self,
         include_details=False,
         existing_jobs=None,
-        save_callback=None,
         save_every=5,
         use_database=True,
     ):
-        """Scrape all jobs from all pages with incremental saving
+        """Scrape all jobs from all pages with incremental saving to database
 
         Args:
             include_details: Whether to deep scrape job details
             existing_jobs: Dict of {job_id: job_data} to skip already-scraped jobs
-            save_callback: Function called periodically with accumulated jobs
             save_every: Save after this many new jobs scraped (default: 5)
             use_database: Whether to save to database (default: True)
         """
@@ -484,7 +477,6 @@ class WaterlooWorksScraper:
             jobs = self.scrape_current_page(
                 include_details=include_details,
                 existing_jobs=existing_jobs,
-                save_callback=save_callback,
                 all_jobs=all_jobs,
                 save_every=save_every,
             )
@@ -494,10 +486,6 @@ class WaterlooWorksScraper:
             if use_database and jobs:
                 saved = self.save_jobs_to_database(jobs)
                 print(f"💾 Saved {saved} jobs to database\n")
-            # Also call save_callback if provided (for backwards compatibility)
-            elif save_callback:
-                print(f"💾 Saving page progress ({len(all_jobs)} jobs total)...\n")
-                save_callback(all_jobs)
 
             # Go to next page if not the last one
             if page < num_pages:
