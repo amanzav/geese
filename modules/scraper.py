@@ -1,13 +1,15 @@
-"""
-Scraper Module for Geese
-Handles job scraping and navigation on WaterlooWorks
-"""
+"""Scraper Module - Handles job scraping and navigation on WaterlooWorks"""
 
 import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from .utils import TIMEOUT, PAGE_LOAD, get_cell_text, calculate_chances
+from .utils import (
+    TIMEOUT, PAGE_LOAD, SELECTORS,
+    get_cell_text, calculate_chances,
+    get_pagination_pages, go_to_next_page,
+    close_job_details_panel
+)
 from .llm_assistant import CompensationExtractor
 from .database import get_db
 
@@ -16,16 +18,15 @@ class WaterlooWorksScraper:
     """Handle job scraping on WaterlooWorks"""
 
     def __init__(self, driver, llm_provider="gemini"):
-        """
-        Initialize scraper with an existing browser driver
-
+        """Initialize scraper
+        
         Args:
             driver: Selenium WebDriver instance (from auth)
-            llm_provider: LLM provider for compensation extraction ("gemini" or "openai")
+            llm_provider: LLM provider for compensation extraction
         """
         self.driver = driver
         self.llm_provider = llm_provider
-        self.compensation_extractor = None  # Lazy initialization
+        self.compensation_extractor = None
 
     def go_to_jobs_page(self):
         """Navigate to jobs page and apply optional program filter"""
@@ -375,18 +376,7 @@ class WaterlooWorksScraper:
     
     def close_job_details_panel(self):
         """Close the currently open job details panel"""
-        try:
-            close_buttons = self.driver.find_elements(
-                By.CSS_SELECTOR, "[class='btn__default--text btn--default protip']"
-            )
-            if close_buttons:
-                close_buttons[-1].click()
-                time.sleep(1)
-                return True
-            return False
-        except Exception as e:
-            print(f"  ⚠️  Error closing job panel: {e}")
-            return False
+        return close_job_details_panel(self.driver)
 
     def scrape_current_page(
         self,
@@ -529,20 +519,11 @@ class WaterlooWorksScraper:
 
     def get_pagination_pages(self):
         """Get the number of pages in the current view"""
-        pagination = WebDriverWait(self.driver, TIMEOUT).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "pagination"))
-        )
-        page_buttons = len(pagination.find_elements(By.TAG_NAME, "li")) - 4
-        return page_buttons
+        return get_pagination_pages(self.driver)
 
     def next_page(self):
         """Go to the next page in pagination"""
-        pagination = WebDriverWait(self.driver, TIMEOUT).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "pagination"))
-        )
-        next_button = pagination.find_elements(By.TAG_NAME, "li")[-2]
-        next_button.find_element(By.TAG_NAME, "a").click()
-        time.sleep(PAGE_LOAD)
+        go_to_next_page(self.driver)
 
     def save_jobs_to_database(self, jobs):
         """Save scraped jobs to SQLite database

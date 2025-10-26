@@ -1,7 +1,4 @@
-"""
-Cover Letter Generator Module
-Handles generation and uploading of cover letters for Geese Jobs
-"""
+"""Cover Letter Generator Module"""
 
 import os
 import re
@@ -17,7 +14,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
-from .utils import TIMEOUT, PAGE_LOAD
+from .utils import (
+    TIMEOUT, PAGE_LOAD,
+    navigate_to_folder, get_pagination_pages, go_to_next_page,
+    get_jobs_from_page, sanitize_filename
+)
 
 
 class CoverLetterGenerator:
@@ -48,47 +49,9 @@ class CoverLetterGenerator:
             self.model = None
         
     def get_document_name(self, company, job_title):
-        """
-        Generate standardized document name
-        
-        Args:
-            company: Company name
-            job_title: Job title
-            
-        Returns:
-            Sanitized filename without extension
-        """
-        # Windows doesn't allow: < > : " / \ | ? * and control characters (0-31)
-        # Also remove brackets, parentheses, and other problematic characters
-        def sanitize(text):
-            # Remove or replace problematic characters
-            text = text.replace('/', '_')
-            text = text.replace('\\', '_')
-            text = text.replace(':', '_')
-            text = text.replace('*', '_')
-            text = text.replace('?', '_')
-            text = text.replace('"', '')
-            text = text.replace('<', '')
-            text = text.replace('>', '')
-            text = text.replace('|', '_')
-            text = text.replace('(', '')
-            text = text.replace(')', '')
-            text = text.replace('[', '')
-            text = text.replace(']', '')
-            text = text.replace('{', '')
-            text = text.replace('}', '')
-            # Remove any other non-alphanumeric except spaces, hyphens, underscores
-            text = re.sub(r'[^\w\s-]', '', text)
-            # Replace multiple spaces with single space
-            text = re.sub(r'\s+', ' ', text)
-            # Replace spaces with underscores
-            text = text.strip().replace(' ', '_')
-            # Remove multiple underscores
-            text = re.sub(r'_+', '_', text)
-            return text.strip('_')
-        
-        company_clean = sanitize(company)
-        title_clean = sanitize(job_title)
+        """Generate standardized document name"""
+        company_clean = sanitize_filename(company)
+        title_clean = sanitize_filename(job_title)
         return f"{company_clean}_{title_clean}"
     
     def cover_letter_exists(self, company, job_title):
@@ -107,109 +70,37 @@ class CoverLetterGenerator:
         return pdf_path.exists()
     
     def navigate_to_geese_jobs(self):
-        """
-        Navigate to the Geese Jobs (shortlisted) section
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            print("\n🦢 Navigating to Geese Jobs section...")
-            
-            # Go to jobs page
-            self.driver.get("https://waterlooworks.uwaterloo.ca/myAccount/co-op/full/jobs.htm")
-            time.sleep(PAGE_LOAD)
-            
-            # Find all stat cards
-            stat_cards = WebDriverWait(self.driver, TIMEOUT).until(
-                EC.presence_of_all_elements_located(
-                    (By.CSS_SELECTOR, ".simple--stat-card.border-radius--16.display--flex.flex--column.dist--between")
-                )
-            )
-            
-            print(f"   Found {len(stat_cards)} stat cards")
-            
-            # Find the one containing "geese"
-            geese_card = None
-            for card in stat_cards:
-                if "geese" in card.text.lower():
-                    geese_card = card
-                    print(f"   ✓ Found Geese Jobs card: '{card.text.strip()[:50]}...'")
-                    break
-            
-            if not geese_card:
-                print("   ✗ Could not find Geese Jobs card")
-                return False
-            
-            # Click the link inside the card
-            link = geese_card.find_element(By.TAG_NAME, "a")
-            link.click()
-            time.sleep(PAGE_LOAD)
-            
+        """Navigate to the Geese Jobs (shortlisted) section"""
+        print("\n🦢 Navigating to Geese Jobs section...")
+        success = navigate_to_folder(self.driver, "geese")
+        if success:
             print("   ✓ Successfully navigated to Geese Jobs")
-            return True
-            
-        except Exception as e:
-            print(f"   ✗ Error navigating to Geese Jobs: {e}")
-            return False
+        return success
     
     def get_pagination_pages(self):
         """Get the number of pages in the current view"""
-        try:
-            pagination = WebDriverWait(self.driver, TIMEOUT).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "pagination"))
-            )
-            page_buttons = len(pagination.find_elements(By.TAG_NAME, "li")) - 4
-            return page_buttons
-        except Exception as e:
-            print(f"   ⚠ Could not find pagination, assuming 1 page: {e}")
-            return 1
+        return get_pagination_pages(self.driver)
     
     def next_page(self):
         """Go to the next page in pagination"""
-        pagination = WebDriverWait(self.driver, TIMEOUT).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "pagination"))
-        )
-        next_button = pagination.find_elements(By.TAG_NAME, "li")[-2]
-        next_button.find_element(By.TAG_NAME, "a").click()
-        time.sleep(PAGE_LOAD)
+        go_to_next_page(self.driver)
     
     def get_geese_jobs_from_page(self):
-        """
-        Get all job listings from the current Geese Jobs page
-        
-        Returns:
-            List of job dictionaries with basic info
-        """
+        """Get all job listings from the current Geese Jobs page"""
         jobs = []
-        
         try:
-            # Wait for job listings to load
-            time.sleep(PAGE_LOAD)
-            
-            # Find all job rows in the table
-            job_rows = WebDriverWait(self.driver, TIMEOUT).until(
-                EC.presence_of_all_elements_located(
-                    (By.CSS_SELECTOR, "table.table tbody tr")
-                )
-            )
-            
+            job_rows = get_jobs_from_page(self.driver)
             print(f"   Found {len(job_rows)} job listings on this page")
             
             for idx, row in enumerate(job_rows, 1):
                 try:
-                    # Extract basic info from the row
                     cells = row.find_elements(By.TAG_NAME, "td")
-                    
                     if len(cells) < 4:
                         continue
                     
-                    # Get job title link
                     job_title_elem = cells[0].find_element(By.TAG_NAME, "a")
                     job_title = job_title_elem.text.strip()
                     job_id = job_title_elem.get_attribute("href").split("=")[-1]
-                    
-                    # Get company name
                     company = cells[1].text.strip()
                     
                     jobs.append({
@@ -219,13 +110,11 @@ class CoverLetterGenerator:
                         "title_element": job_title_elem,
                         "row_index": idx
                     })
-                    
                 except Exception as e:
                     print(f"   ⚠ Error extracting job {idx}: {e}")
                     continue
             
             return jobs
-            
         except Exception as e:
             print(f"   ✗ Error getting jobs from page: {e}")
             return []

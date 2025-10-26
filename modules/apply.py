@@ -1,11 +1,4 @@
-"""
-Application Module for WaterlooWorks
-Automates applying to jobs from the Geese (shortlist) section with rules:
-- Skip jobs requiring extra documents beyond resume/cover letter
-- Continue application on WaterlooWorks even if external apply is required, and report these at the end
-- Handle pre-screening by waiting for user to click Next; resume automation afterwards
-- Programmatically click the final Submit using provided selector
-"""
+"""Application Module - Automates applying to jobs from the Geese section"""
 
 from __future__ import annotations
 
@@ -20,7 +13,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 
-from .utils import TIMEOUT, PAGE_LOAD
+from .utils import (
+    TIMEOUT, PAGE_LOAD, SELECTORS,
+    navigate_to_folder, get_pagination_pages, go_to_next_page,
+    close_job_details_panel, get_jobs_from_page, sanitize_filename
+)
 from .database import get_db
 
 
@@ -83,73 +80,26 @@ class WaterlooWorksApplicator:
 
     # ---------- Navigation helpers (borrowed pattern from cover_letter_generator) ----------
     def navigate_to_geese_jobs(self) -> bool:
-        """Navigate to the specified WaterlooWorks folder (e.g., Geese Jobs, good shit, etc.)."""
-        try:
-            print(f"\n📁 Navigating to '{self.waterlooworks_folder}' folder...")
-            self.driver.get(
-                "https://waterlooworks.uwaterloo.ca/myAccount/co-op/full/jobs.htm"
-            )
-            time.sleep(PAGE_LOAD)
-
-            stat_cards = WebDriverWait(self.driver, TIMEOUT).until(
-                EC.presence_of_all_elements_located(
-                    (
-                        By.CSS_SELECTOR,
-                        ".simple--stat-card.border-radius--16.display--flex.flex--column.dist--between",
-                    )
-                )
-            )
-
-            target_card = None
-            for card in stat_cards:
-                if self.waterlooworks_folder.lower() in card.text.lower():
-                    target_card = card
-                    break
-
-            if not target_card:
-                print(f"   ✗ Could not find '{self.waterlooworks_folder}' folder")
-                print(f"   Available folders:")
-                for card in stat_cards:
-                    folder_name = card.text.split('\n')[0] if '\n' in card.text else card.text
-                    print(f"      - {folder_name}")
-                return False
-
-            link = target_card.find_element(By.TAG_NAME, "a")
-            link.click()
-            time.sleep(PAGE_LOAD)
+        """Navigate to the specified WaterlooWorks folder"""
+        print(f"\n📁 Navigating to '{self.waterlooworks_folder}' folder...")
+        success = navigate_to_folder(self.driver, self.waterlooworks_folder)
+        if success:
             print(f"   ✓ '{self.waterlooworks_folder}' folder opened")
-            return True
-        except Exception as e:
-            print(f"   ✗ Error navigating to '{self.waterlooworks_folder}' folder: {e}")
-            return False
+        return success
 
     def get_pagination_pages(self) -> int:
-        """Get number of pages in the Geese jobs list."""
-        try:
-            pagination = WebDriverWait(self.driver, TIMEOUT).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "pagination"))
-            )
-            page_buttons = len(pagination.find_elements(By.TAG_NAME, "li")) - 4
-            return max(page_buttons, 1)
-        except Exception:
-            return 1
+        """Get number of pages in the Geese jobs list"""
+        return get_pagination_pages(self.driver)
 
     def next_page(self):
-        pagination = WebDriverWait(self.driver, TIMEOUT).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "pagination"))
-        )
-        next_button = pagination.find_elements(By.TAG_NAME, "li")[-2]
-        next_button.find_element(By.TAG_NAME, "a").click()
-        time.sleep(PAGE_LOAD)
+        """Go to next page"""
+        go_to_next_page(self.driver)
 
     def get_geese_jobs_from_page(self) -> List[Dict]:
-        """Return basic job rows from current Geese page."""
+        """Return basic job rows from current Geese page"""
         jobs: List[Dict] = []
         try:
-            time.sleep(PAGE_LOAD)
-            job_rows = WebDriverWait(self.driver, TIMEOUT).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "table.table tbody tr"))
-            )
+            job_rows = get_jobs_from_page(self.driver)
             for idx, row in enumerate(job_rows, 1):
                 try:
                     cells = row.find_elements(By.TAG_NAME, "td")
@@ -159,16 +109,14 @@ class WaterlooWorksApplicator:
                     job_title = job_title_elem.text.strip()
                     job_id = job_title_elem.get_attribute("href").split("=")[-1]
                     company = cells[1].text.strip()
-                    jobs.append(
-                        {
-                            "job_id": job_id,
-                            "job_title": job_title,
-                            "company": company,
-                            "title_element": job_title_elem,
-                            "row_element": row,
-                            "row_index": idx,
-                        }
-                    )
+                    jobs.append({
+                        "job_id": job_id,
+                        "job_title": job_title,
+                        "company": company,
+                        "title_element": job_title_elem,
+                        "row_element": row,
+                        "row_index": idx,
+                    })
                 except Exception:
                     continue
         except Exception as e:
@@ -476,61 +424,20 @@ Be strict: if there's any clear indication of needing to apply elsewhere, flag i
     def _sanitize_name(self, text: str) -> str:
         return re.sub(r"[^\w\s-]", "", text).strip().replace(" ", "_")
 
+    def _cover_letter_name(self, company: str, job_title: str) -> str:
+        """Build expected cover letter document name matching the generator's sanitization"""
+        company_clean = sanitize_filename(company)
+        title_clean = sanitize_filename(job_title)
+        return f"{company_clean}_{title_clean}"
+    
     def _get_cover_letter_path(self, company: str, job_title: str) -> Optional[str]:
-        """Get the full path to the cover letter PDF file
-        
-        Args:
-            company: Company name
-            job_title: Job title
-            
-        Returns:
-            Full path to cover letter PDF if it exists, None otherwise
-        """
+        """Get the full path to the cover letter PDF file"""
         cover_letter_name = self._cover_letter_name(company, job_title)
         pdf_path = os.path.join(self.cover_letters_folder, f"{cover_letter_name}.pdf")
         
         if os.path.exists(pdf_path):
             return pdf_path
         return None
-
-        def _cover_letter_name(self, company: str, job_title: str) -> str:
-                """Build expected cover letter document name matching the generator's sanitization.
-
-                Example: "Zomp Inc" + "Software Developer" -> "Zomp_Inc_Software_Developer"
-                
-                IMPORTANT: Must match the sanitization logic in cover_letter_generator.py
-                to ensure we can find the generated cover letters.
-                """
-                def sanitize(text):
-                    # Remove or replace Windows-invalid and problematic characters
-                    text = text.replace('/', '_')
-                    text = text.replace('\\', '_')
-                    text = text.replace(':', '_')
-                    text = text.replace('*', '_')
-                    text = text.replace('?', '_')
-                    text = text.replace('"', '')
-                    text = text.replace('<', '')
-                    text = text.replace('>', '')
-                    text = text.replace('|', '_')
-                    text = text.replace('(', '')
-                    text = text.replace(')', '')
-                    text = text.replace('[', '')
-                    text = text.replace(']', '')
-                    text = text.replace('{', '')
-                    text = text.replace('}', '')
-                    # Remove any other non-alphanumeric except spaces, hyphens, underscores
-                    text = re.sub(r'[^\w\s-]', '', text)
-                    # Replace multiple spaces with single space
-                    text = re.sub(r'\s+', ' ', text)
-                    # Replace spaces with underscores
-                    text = text.strip().replace(' ', '_')
-                    # Remove multiple underscores
-                    text = re.sub(r'_+', '_', text)
-                    return text.strip('_')
-                
-                company_clean = sanitize(company)
-                title_clean = sanitize(job_title)
-                return f"{company_clean}_{title_clean}"
 
     def fill_package_and_submit(
         self, organization: str, job_title: str, attempt_select_docs: bool = True
@@ -578,7 +485,7 @@ Be strict: if there's any clear indication of needing to apply elsewhere, flag i
             if applicant:
                 pkg_name_val = f"{applicant} - {job_title}"
             else:
-                pkg_name_val = f"{self._sanitize_name(organization)} {self._sanitize_name(job_title)} Package"
+                pkg_name_val = f"{sanitize_filename(organization)} {sanitize_filename(job_title)} Package"
             try:
                 pkg_input = None
                 try:
@@ -684,17 +591,8 @@ Be strict: if there's any clear indication of needing to apply elsewhere, flag i
             return False
 
     def close_job_details_panel(self):
-        try:
-            close_buttons = self.driver.find_elements(
-                By.CSS_SELECTOR, "[class='btn__default--text btn--default protip']"
-            )
-            if close_buttons:
-                close_buttons[-1].click()
-                time.sleep(1)
-                return True
-            return False
-        except Exception:
-            return False
+        """Close the job details panel"""
+        return close_job_details_panel(self.driver)
 
     # ---------- Public entrypoint ----------
     def apply_to_geese_jobs(

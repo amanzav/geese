@@ -30,6 +30,7 @@ class ResumeMatcher:
         cache_path: Optional[str] = None,
         resume_cache_path: Optional[str] = None,
         use_database: bool = True,
+        tech_patterns_path: str = "data/tech_patterns.json",
     ):
         """Initialize matcher with configuration.
         
@@ -39,6 +40,7 @@ class ResumeMatcher:
             cache_path: Path to JSON cache file (for backwards compatibility)
             resume_cache_path: Path to resume cache file
             use_database: Whether to use database for caching (default: True)
+            tech_patterns_path: Path to technology patterns JSON file
         """
 
         self.config = config or load_app_config(config_path)
@@ -47,12 +49,14 @@ class ResumeMatcher:
         # Cache paths
         self.cache_path = cache_path or "data/job_matches_cache.json"
         self.resume_cache_path = resume_cache_path or "data/resume_parsed.txt"
+        self.tech_patterns_path = tech_patterns_path
         self.use_database = use_database
 
         # Internal state
         self._resume_bullets: Optional[List[str]] = None
         self._embeddings_manager: Optional["EmbeddingsManager"] = None
         self._resume_index_prepared = False
+        self._tech_patterns: Optional[List[tuple]] = None
 
         # Load match cache from database or JSON file
         self.match_cache = self._load_match_cache()
@@ -258,6 +262,32 @@ class ResumeMatcher:
         
         return bullets
     
+    def _load_tech_patterns(self) -> List[tuple]:
+        """Load technology patterns from JSON file"""
+        try:
+            if not os.path.exists(self.tech_patterns_path):
+                print(f"⚠️  Tech patterns file not found: {self.tech_patterns_path}")
+                return []
+            
+            with open(self.tech_patterns_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Convert JSON to list of tuples (name, pattern) sorted by priority
+            patterns = data.get("patterns", [])
+            sorted_patterns = sorted(patterns, key=lambda x: x.get("priority", 99))
+            
+            return [(p["name"], p["pattern"]) for p in sorted_patterns]
+        
+        except Exception as e:
+            print(f"⚠️  Error loading tech patterns: {e}")
+            return []
+    
+    def _get_tech_patterns(self) -> List[tuple]:
+        """Return tech patterns, loading from disk if necessary"""
+        if self._tech_patterns is None:
+            self._tech_patterns = self._load_tech_patterns()
+        return self._tech_patterns
+    
     def _extract_technologies(self, text: str) -> set:
         """Extract technology keywords from text using regex patterns"""
         if not text:
@@ -265,131 +295,17 @@ class ResumeMatcher:
         
         import re
         
-        # Comprehensive tech keyword list with canonical names
-        # NOTE: Process in order - C++/C# before C to avoid false matches
-        tech_patterns = [
-            # Languages - Order matters!
-            ('C++', r'c\+\+'),  # No \b as it doesn't work with +
-            ('C#', r'c#'),  # No \b as it doesn't work with #
-            ('Python', r'\bpython\b'),
-            ('Java', r'\bjava\b(?!script)'),  # Java but not JavaScript
-            ('JavaScript', r'\bjavascript\b'),
-            ('TypeScript', r'\b(typescript|ts)\b'),
-            ('Go', r'\b(golang|go)\b'),
-            ('Rust', r'\brust\b'),
-            ('Kotlin', r'\bkotlin\b'),
-            ('Swift', r'\bswift\b'),
-            ('Ruby', r'\bruby\b'),
-            ('PHP', r'\bphp\b'),
-            ('Scala', r'\bscala\b'),
-            ('R', r'\b(r language|\br\s)'),
-            ('MATLAB', r'\bmatlab\b'),
-            # C last with explicit context keywords
-            ('C', r'\b(c language|c programming\b|c developer\b|(?<!\w)c\b(?=\s+(and|or|language|programming|developer|engineer|code)))'),
-            
-            # Frontend Frameworks
-            ('React Native', r'\breact[\s-]native\b'),
-            ('React', r'\breact(\.js)?\b'),
-            ('Vue', r'\bvue(\.js)?\b'),
-            ('Angular', r'\bangular\b'),
-            ('Next.js', r'\bnext(\.js)?\b'),
-            ('Svelte', r'\bsvelte\b'),
-            ('jQuery', r'\bjquery\b'),
-            ('Bootstrap', r'\bbootstrap\b'),
-            ('Tailwind CSS', r'\btailwind( css)?\b'),
-            
-            # Backend Frameworks
-            ('Node.js', r'\bnode(\.js)?\b'),
-            ('Django', r'\bdjango\b'),
-            ('Flask', r'\bflask\b'),
-            ('FastAPI', r'\bfastapi\b'),
-            ('Spring', r'\bspring( boot| framework)?\b'),
-            ('Express', r'\bexpress(\.js)?\b'),
-            ('NestJS', r'\bnest(\.js)?\b'),
-            ('Rails', r'\bruby on rails|rails\b'),
-            
-            # Mobile
-            ('Flutter', r'\bflutter\b'),
-            ('iOS', r'\bios\b'),
-            ('Android', r'\bandroid\b'),
-            
-            # Cloud & DevOps
-            ('AWS', r'\baws|amazon web services\b'),
-            ('Azure', r'\bazure|microsoft azure\b'),
-            ('GCP', r'\bgcp|google cloud\b'),
-            ('Lambda', r'\b(aws )?lambda\b'),
-            ('S3', r'\bs3\b'),
-            ('EC2', r'\bec2\b'),
-            ('Kubernetes', r'\bkubernetes|k8s\b'),
-            ('Docker', r'\bdocker\b'),
-            ('Terraform', r'\bterraform\b'),
-            ('Ansible', r'\bansible\b'),
-            ('Jenkins', r'\bjenkins\b'),
-            ('CI/CD', r'\bci/cd|ci\/cd\b'),
-            ('GitHub Actions', r'\bgithub actions\b'),
-            ('GitLab', r'\bgitlab( ci)?\b'),
-            ('CircleCI', r'\bcircleci\b'),
-            
-            # Databases
-            ('PostgreSQL', r'\bpostgresql|postgres\b'),
-            ('MySQL', r'\bmysql\b'),
-            ('MongoDB', r'\bmongodb|mongo\b'),
-            ('Redis', r'\bredis\b'),
-            ('DynamoDB', r'\bdynamodb\b'),
-            ('Cassandra', r'\bcassandra\b'),
-            ('Elasticsearch', r'\belasticsearch|elastic search\b'),
-            ('SQL', r'\bsql\b'),
-            ('NoSQL', r'\bnosql\b'),
-            ('SQLite', r'\bsqlite\b'),
-            
-            # ML/AI
-            ('TensorFlow', r'\btensorflow\b'),
-            ('PyTorch', r'\bpytorch\b'),
-            ('Keras', r'\bkeras\b'),
-            ('Scikit-learn', r'\bscikit-learn|sklearn\b'),
-            ('LangChain', r'\blangchain\b'),
-            ('LLM', r'\bllm|large language model\b'),
-            ('Transformers', r'\btransformers\b'),
-            ('OpenAI', r'\bopenai\b'),
-            ('Hugging Face', r'\bhugging ?face\b'),
-            ('BERT', r'\bbert\b'),
-            ('GPT', r'\bgpt\b'),
-            ('Machine Learning', r'\bmachine learning|ml\b'),
-            ('Deep Learning', r'\bdeep learning\b'),
-            ('NLP', r'\bnlp|natural language processing\b'),
-            
-            # Data
-            ('Pandas', r'\bpandas\b'),
-            ('NumPy', r'\bnumpy\b'),
-            ('Spark', r'\bspark|apache spark\b'),
-            ('Airflow', r'\bairflow\b'),
-            ('Kafka', r'\bkafka|apache kafka\b'),
-            ('Hadoop', r'\bhadoop\b'),
-            ('Tableau', r'\btableau\b'),
-            ('Power BI', r'\bpower ?bi\b'),
-            
-            # Tools & Others
-            ('Git', r'\bgit\b'),
-            ('Linux', r'\blinux\b'),
-            ('Bash', r'\bbash\b'),
-            ('Unix', r'\bunix\b'),
-            ('Agile', r'\bagile\b'),
-            ('Scrum', r'\bscrum\b'),
-            ('REST API', r'\brest(ful)? api\b'),
-            ('GraphQL', r'\bgraphql\b'),
-            ('gRPC', r'\bgrpc\b'),
-            ('WebSocket', r'\bwebsocket\b'),
-            ('MQTT', r'\bmqtt\b'),
-            ('Selenium', r'\bselenium\b'),
-            ('Pytest', r'\bpytest\b'),
-            ('Jest', r'\bjest\b'),
-            ('JUnit', r'\bjunit\b')
-        ]
+        # Load patterns from JSON file
+        tech_patterns = self._get_tech_patterns()
+        
+        if not tech_patterns:
+            print("⚠️  No tech patterns loaded, technology extraction disabled")
+            return set()
         
         text_lower = text.lower()
         found_techs = set()
         
-        # Process patterns in order
+        # Process patterns in order (priority sorted)
         for canonical_name, pattern in tech_patterns:
             if re.search(pattern, text_lower, re.IGNORECASE):
                 found_techs.add(canonical_name)
