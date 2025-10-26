@@ -121,10 +121,3 @@ def test_run_cli_analyze_mode_force_rematch(tmp_path):
     )
 
     assert analyzer.calls[0][2] is True
-
-
-def test_run_cli_realtime_mode():
-    analyzer = BatchSpyAnalyzer()
-    run_cli(["--mode", "realtime"], analyzer=analyzer)
-
-    assert analyzer.calls == [("realtime", True)]

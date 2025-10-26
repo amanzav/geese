@@ -63,7 +63,7 @@ def calculate_chances(openings, applications):
 
 
 def sanitize_filename(text: str) -> str:
-    """
+    r"""
     Sanitize text for use in filenames (Windows-compatible)
     
     Removes/replaces characters that are invalid in Windows filenames:
