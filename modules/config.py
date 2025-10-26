@@ -90,6 +90,44 @@ class MatcherSettings:
         return dict(self.data)
 
 
+@dataclass
+class AgentSettings:
+    """Structured access to AI agent configuration."""
+    
+    data: MutableMapping[str, Any] = field(default_factory=dict)
+    
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.data.get(key, default)
+    
+    @property
+    def enable_token_tracking(self) -> bool:
+        return self.data.get("enable_token_tracking", True)
+    
+    @property
+    def cover_letter_agent(self) -> Dict[str, str]:
+        return self.data.get("cover_letter_agent", {
+            "provider": "gemini",
+            "model": "gemini-1.5-flash"
+        })
+    
+    @property
+    def keyword_extractor_agent(self) -> Dict[str, str]:
+        return self.data.get("keyword_extractor_agent", {
+            "provider": "groq",
+            "model": "llama-3.1-8b-instant"
+        })
+    
+    @property
+    def document_classifier_agent(self) -> Dict[str, str]:
+        return self.data.get("document_classifier_agent", {
+            "provider": "groq",
+            "model": "llama-3.1-8b-instant"
+        })
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return dict(self.data)
+
+
 class AppConfig(Mapping[str, Any]):
     """Wrapper around configuration data with convenience helpers."""
 
@@ -97,6 +135,7 @@ class AppConfig(Mapping[str, Any]):
         self._data = data
         self._source_path = source_path
         self.matcher = MatcherSettings(data.get("matcher", {}))
+        self.agents = AgentSettings(data.get("agents", {}))
 
     @property
     def resume_path(self) -> str:

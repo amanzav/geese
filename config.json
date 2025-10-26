@@ -11,6 +11,29 @@
   "auto_apply_enabled": false,
   "max_applications_per_session": 10,
   
+  "agents": {
+    "_comment": "AI agent configuration for task routing and cost optimization",
+    "enable_token_tracking": true,
+    
+    "cover_letter_agent": {
+      "provider": "gemini",
+      "model": "gemini-1.5-flash",
+      "_comment": "High-quality creative writing - worth the cost"
+    },
+    
+    "keyword_extractor_agent": {
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "_comment": "Fast keyword extraction - Groq provides high rate limits"
+    },
+    
+    "document_classifier_agent": {
+      "provider": "groq",
+      "model": "llama-3.1-8b-instant",
+      "_comment": "Binary classification - fast and cheap with Groq"
+    }
+  },
+  
   "matcher": {
     "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
     "similarity_threshold": 0.30,
@@ -19,7 +42,7 @@
     "auto_save_threshold": 30,
     "penalty_per_missing_must_have": 0.05,
     
-    "_comment_future_llm": "LLM settings for future cover letter generation",
+    "_comment_future_llm": "LLM settings for backwards compatibility",
     "llm_provider": "gemini",
     "use_synonyms": false,
     

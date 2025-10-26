@@ -9,7 +9,6 @@ from docx import Document
 from docx.shared import Pt
 from docx2pdf import convert
 import pythoncom
-import google.generativeai as genai
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -20,6 +19,7 @@ from .utils import (
     get_jobs_from_page, sanitize_filename
 )
 from .config import load_app_config
+from .agents import AgentFactory
 
 
 class CoverLetterGenerator:
@@ -32,26 +32,34 @@ class CoverLetterGenerator:
         Args:
             driver: Selenium WebDriver instance
             resume_text: User's resume text for context
-            prompt_template: Template for LLM prompt
-            api_key: Google API key for Gemini
+            prompt_template: Template for LLM prompt (deprecated - uses agent)
+            api_key: Google API key (deprecated - uses agent config)
             cover_letters_folder: Folder to save cover letters (default: "cover_letters")
         """
         self.driver = driver
         self.resume_text = resume_text
-        self.prompt_template = prompt_template
+        self.prompt_template = prompt_template  # Keep for backwards compatibility
         self.cover_letters_dir = Path(cover_letters_folder)
         self.cover_letters_dir.mkdir(exist_ok=True)
         
-        # Load config for model names
+        # Load config
         config = load_app_config()
         
-        # Configure Gemini
-        if api_key:
-            genai.configure(api_key=api_key)
-            model_name = config.matcher.llm_models.get("gemini_lite", "gemini-2.0-flash-lite")
-            self.model = genai.GenerativeModel(model_name)
-        else:
-            self.model = None
+        # Initialize agent factory
+        agent_config = {
+            "cover_letter_agent": {
+                "provider": config.agents.cover_letter_agent.get("provider", "gemini"),
+                "model": config.agents.cover_letter_agent.get("model", "gemini-1.5-flash")
+            }
+        }
+        
+        self.factory = AgentFactory(
+            config=agent_config,
+            enable_tracking=config.agents.enable_token_tracking
+        )
+        
+        self.agent = self.factory.get_cover_letter_agent()
+        print(f"✅ CoverLetterGenerator initialized with {self.agent.provider}/{self.agent.model}")
         
     def get_document_name(self, company, job_title):
         """Generate standardized document name"""
@@ -169,7 +177,7 @@ class CoverLetterGenerator:
     
     def generate_cover_letter_text(self, company, job_title, description):
         """
-        Generate cover letter text using LLM
+        Generate cover letter text using CoverLetterAgent
         
         Args:
             company: Company name
@@ -179,86 +187,30 @@ class CoverLetterGenerator:
         Returns:
             Generated cover letter text or None
         """
-        if not self.model:
-            print(f"      ✗ No LLM model configured")
-            return None
-            
         try:
-            output = ""
+            # Use the agent's generate method
+            result = self.agent.generate_cover_letter(
+                company=company,
+                job_title=job_title,
+                job_description=description,
+                resume_text=self.resume_text,
+                max_retries=3
+            )
             
-            # Keep trying until we get appropriate length (100-400 words)
-            attempts = 0
-            max_attempts = 3
-            
-            while (len(output.split()) > 400 or len(output.split()) < 100) and attempts < max_attempts:
-                attempts += 1
-                
-                try:
-                    prompt = f"""{self.prompt_template}
-
-{self.resume_text}
-
-Job Information:
-Organization: {company}
-Position: {job_title}
-Job Description: {description}
-
-CRITICAL INSTRUCTIONS - READ CAREFULLY:
-Write a professional cover letter (100-400 words) that is COMPLETELY FINISHED and READY TO SUBMIT.
-
-ABSOLUTELY NO:
-- Placeholders like [Your Name], [Company Name], [Position], etc.
-- Square brackets [] with anything to fill in
-- Blank spaces or underscores _____ to complete
-- Notes like "customize this section" or "add details here"
-- Any TODO items or suggestions for edits
-- Special Unicode symbols, emojis, or decorative characters
-- Smart quotes/apostrophes (use straight quotes: " and ')
-- Em dashes or en dashes (use regular hyphens: -)
-- Bullet points with special symbols (use plain text only)
-- Any symbols that might not render properly in PDF
-
-REQUIRED:
-1. Use ONLY real information from the resume provided above
-2. Reference the specific company name: {company}
-3. Reference the specific position: {job_title}
-4. Show genuine enthusiasm for THIS specific role at THIS specific company
-5. Highlight 2-3 relevant experiences or skills from the resume that match the job description
-6. Explain concretely why I'm a great fit based on my actual experience
-7. Keep a professional but personable tone
-8. Make every sentence complete and specific - no generic statements
-9. Use only standard ASCII characters and basic punctuation (periods, commas, colons, semicolons, hyphens, parentheses)
-10. Write in clear paragraphs with proper spacing
-
-The cover letter will be exported as PDF and must be 100% ready to submit without any edits.
-
-Start with "Dear Hiring Manager," and end with "Aman Zaveri"."""
-
-                    response = self.model.generate_content(prompt)
-                    output = self._filter_text(response.text)
-                    
-                    if len(output.split()) >= 100:
-                        break
-                        
-                except Exception as e:
-                    print(f"      ⚠ LLM attempt {attempts} failed: {str(e)[:80]}")
-                    if attempts >= max_attempts:
-                        raise
-                    time.sleep(2)  # Wait before retry
-            
-            if len(output.split()) < 100:
-                print(f"      ⚠ Generated text too short ({len(output.split())} words)")
+            if result:
+                print(f"      ✓ Generated {len(result.split())} word cover letter")
+                return result
+            else:
+                print(f"      ✗ Failed to generate cover letter")
                 return None
-            
-            return output.strip()
-            
+                
         except Exception as e:
             print(f"      ✗ Error generating cover letter: {str(e)[:100]}")
             return None
     
     def _filter_text(self, output: str) -> str:
         """
-        Filter and clean the generated text
+        Filter and clean the generated text (deprecated - kept for backwards compatibility)
         
         Args:
             output: Raw LLM output

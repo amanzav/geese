@@ -55,7 +55,7 @@ class ResumeMatcher:
         self._resume_bullets: Optional[List[str]] = None
         self._embeddings_manager: Optional["EmbeddingsManager"] = None
         self._resume_index_prepared = False
-        self._llm = None  # Lazy-load Gemini for tech extraction
+        self._agent_factory = None  # Lazy-load agent factory for keyword extraction
 
         # Load match cache from database or JSON file
         self.match_cache = self._load_match_cache()
@@ -259,61 +259,47 @@ class ResumeMatcher:
         
         return bullets
     
+    def _get_agent_factory(self):
+        """Get agent factory instance, initializing if needed"""
+        if self._agent_factory is None:
+            from modules.agents import AgentFactory
+            
+            agent_config = {
+                "keyword_extractor_agent": {
+                    "provider": self.config.agents.keyword_extractor_agent.get("provider", "groq"),
+                    "model": self.config.agents.keyword_extractor_agent.get("model", "llama-3.1-8b-instant")
+                }
+            }
+            
+            self._agent_factory = AgentFactory(
+                config=agent_config,
+                enable_tracking=self.config.agents.enable_token_tracking
+            )
+        
+        return self._agent_factory
+    
     def _get_llm(self):
-        """Get Gemini LLM instance, initializing if needed"""
-        if self._llm is None:
-            try:
-                import google.generativeai as genai
-                api_key = os.getenv("GEMINI_API_KEY")
-                if api_key:
-                    genai.configure(api_key=api_key)
-                    model_name = self.matcher_config.llm_models.get("gemini_fast", "gemini-2.0-flash-exp")
-                    self._llm = genai.GenerativeModel(model_name)
-                else:
-                    print("⚠️  GEMINI_API_KEY not found. Technology extraction will be limited.")
-                    self._llm = None
-            except Exception as e:
-                print(f"⚠️  Failed to initialize Gemini: {e}")
-                self._llm = None
-        return self._llm
+        """Get keyword extractor agent (replaces old Gemini LLM)"""
+        factory = self._get_agent_factory()
+        return factory.get_keyword_extractor_agent()
     
     def _extract_technologies(self, text: str) -> set:
-        """Extract technology keywords using Gemini LLM"""
+        """Extract technology keywords using KeywordExtractorAgent"""
         if not text:
             return set()
         
-        llm = self._get_llm()
-        if not llm:
-            # Fallback: basic keyword extraction from common tech terms
+        agent = self._get_llm()  # Returns KeywordExtractorAgent now
+        if not agent:
+            # Fallback to basic extraction if agent not available
             return self._extract_technologies_fallback(text)
         
         try:
-            # Truncate text to avoid token limits
-            text_truncated = text[:3000]
-            
-            prompt = f"""Extract all technology names, frameworks, tools, and programming languages from this text.
-
-Text: {text_truncated}
-
-Return ONLY a comma-separated list of technology names (e.g., "Python, React, AWS, Docker").
-Include: programming languages, frameworks, databases, cloud platforms, dev tools.
-Exclude: soft skills, job roles, company names.
-Use canonical names (e.g., "JavaScript" not "JS", "PostgreSQL" not "Postgres").
-"""
-
-            response = llm.generate_content(prompt)
-            result = response.text.strip()
-            
-            # Parse comma-separated list
-            techs = {t.strip() for t in result.split(',') if t.strip()}
-            
-            # Clean up any markdown formatting
-            techs = {t.replace('`', '').replace('*', '') for t in techs}
-            
+            # Use agent's extraction method
+            techs = agent.extract_technologies(text)
             return techs
             
         except Exception as e:
-            print(f"⚠️  LLM tech extraction failed: {e}, using fallback")
+            print(f"⚠️  Agent tech extraction failed: {e}, using fallback")
             return self._extract_technologies_fallback(text)
     
     def _extract_technologies_fallback(self, text: str) -> set:

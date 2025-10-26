@@ -4,12 +4,15 @@ selenium>=4.15.0
 # Environment management
 python-dotenv>=1.0.0
 
+# AI/LLM providers
+google-generativeai==0.8.2  # Gemini API for cover letters
+groq>=0.9.0                 # Groq API for fast keyword extraction
+
 # Resume matcher dependencies
 sentence-transformers==3.0.1
 faiss-cpu==1.8.0.post1
 numpy==1.26.4
 pypdf==5.0.1
-google-generativeai==0.8.2
 
 # Cover letter generation
 python-docx>=1.1.0
@@ -17,7 +20,11 @@ docx2pdf>=0.1.8
 pywin32>=306  # For pythoncom (Windows only)
 pyperclip>=1.8.2
 
+# Database
+# sqlite3 (built-in with Python)
+
 # Future dependencies (add when needed):
+# openai>=1.0.0         # OpenAI API (alternative)
 # rich>=13.7.0          # For beautiful CLI
 # torch>=2.1.0          # For optional reranking
 # transformers>=4.42.3  # For optional reranking

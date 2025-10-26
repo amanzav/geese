@@ -43,15 +43,23 @@ class WaterlooWorksApplicator:
         # Load config for LLM model names
         self.config = load_app_config()
         
-        # Initialize Gemini for smart document detection
-        api_key = os.getenv("GEMINI_API_KEY")
-        if api_key:
-            genai.configure(api_key=api_key)
-            model_name = self.config.matcher.llm_models.get("gemini_standard", "gemini-1.5-flash")
-            self.llm = genai.GenerativeModel(model_name)
-        else:
-            self.llm = None
-            print("⚠️  Warning: GEMINI_API_KEY not found. Using regex fallback for document detection.")
+        # Initialize agent factory for document classification
+        from .agents import AgentFactory
+        
+        agent_config = {
+            "document_classifier_agent": {
+                "provider": self.config.agents.document_classifier_agent.get("provider", "groq"),
+                "model": self.config.agents.document_classifier_agent.get("model", "llama-3.1-8b-instant")
+            }
+        }
+        
+        self.agent_factory = AgentFactory(
+            config=agent_config,
+            enable_tracking=self.config.agents.enable_token_tracking
+        )
+        
+        self.classifier_agent = self.agent_factory.get_document_classifier_agent()
+        print(f"✅ Document classifier initialized with {self.classifier_agent.provider}/{self.classifier_agent.model}")
 
     def track_application(self, job_id: str, status: str = "submitted", cover_letter_path: Optional[str] = None):
         """Track application in database
@@ -143,107 +151,44 @@ class WaterlooWorksApplicator:
 
     def detect_additional_docs(self, additional_info: Optional[str]) -> Tuple[bool, Optional[str]]:
         """
-        Use Gemini LLM to intelligently detect if job requires extra documents beyond resume/cover letter.
-        Falls back to regex if LLM is unavailable.
+        Use DocumentClassifierAgent to detect if job requires extra documents beyond resume/cover letter.
         """
         if not additional_info or additional_info == "N/A":
             return (False, None)
         
-        # Use LLM if available
-        if self.llm:
-            try:
-                prompt = f"""Analyze this job's additional information and determine if it requires documents OTHER than a resume or cover letter.
-
-Additional Information:
-{additional_info}
-
-Documents we CAN provide (DO NOT flag these):
-- Resume/CV
-- Cover letter
-- Transcripts (official or unofficial)
-
-
-Documents we CANNOT provide (FLAG these):
-- Portfolios, GitHub links, Behance, Dribbble
-- Writing samples, code samples, work samples
-- References, reference letters
-- Security clearance, police checks, background checks
-- Certificates, certifications
-- Any other documents beyond resume/cover letter
-
-Respond with ONLY one of these:
-- "SKIP: [reason]" if extra documents are required (e.g., "SKIP: transcript required")
-- "OK" if only resume/cover letter are needed (or no specific documents mentioned)
-
-Be strict: if there's any mention of documents we can't provide, flag it."""
-
-                response = self.llm.generate_content(prompt)
-                result = response.text.strip()
-                
-                if result.startswith("SKIP:"):
-                    reason = result.replace("SKIP:", "").strip()
-                    return (True, reason)
-                else:
-                    return (False, None)
-            except Exception as e:
-                print(f"      ⚠️  LLM detection failed ({e}), using regex fallback")
-                # Fall through to regex fallback
-        
-        # Regex fallback
-        text = additional_info.lower()
-        for pat in self.EXTRA_DOC_KEYWORDS:
-            if re.search(pat, text):
-                return (True, pat)
-        return (False, None)
+        try:
+            # Use agent's detection method
+            requires, reason = self.classifier_agent.detect_additional_documents(additional_info)
+            return (requires, reason)
+        except Exception as e:
+            print(f"      ⚠️  Agent detection failed ({e}), using regex fallback")
+            # Regex fallback
+            text = additional_info.lower()
+            for pat in self.EXTRA_DOC_KEYWORDS:
+                if re.search(pat, text):
+                    return (True, pat)
+            return (False, None)
 
     def detect_external_required(self, additional_info: Optional[str]) -> Tuple[bool, Optional[str]]:
         """
-        Use Gemini LLM to detect if external application is required.
-        Falls back to regex if LLM is unavailable.
+        Use DocumentClassifierAgent to detect if external application is required.
         """
         if not additional_info or additional_info == "N/A":
             return (False, None)
         
-        # Use LLM if available
-        if self.llm:
-            try:
-                prompt = f"""Analyze this job's additional information and determine if it requires applying externally (not through WaterlooWorks).
-
-Additional Information:
-{additional_info}
-
-Look for indicators like:
-- "Apply directly on company website"
-- "Apply externally" 
-- Links to external job portals (Greenhouse, Lever, Workday, Taleo, etc.)
-- "Use this link to apply"
-- "Employer will contact you directly"
-
-Respond with ONLY one of these:
-- "EXTERNAL: [url or hint]" if external application is required (e.g., "EXTERNAL: https://company.com/jobs" or "EXTERNAL: apply on company portal")
-- "OK" if no external application is required
-
-Be strict: if there's any clear indication of needing to apply elsewhere, flag it."""
-
-                response = self.llm.generate_content(prompt)
-                result = response.text.strip()
-                
-                if result.startswith("EXTERNAL:"):
-                    hint = result.replace("EXTERNAL:", "").strip()
-                    return (True, hint)
-                else:
-                    return (False, None)
-            except Exception as e:
-                print(f"      ⚠️  LLM detection failed ({e}), using regex fallback")
-                # Fall through to regex fallback
-        
-        # Regex fallback
-        text = additional_info.lower()
-        url_match = re.search(r"https?://\S+", additional_info)
-        for pat in self.EXTERNAL_APPLY_PATTERNS:
-            if re.search(pat, text):
-                return (True, url_match.group(0) if url_match else pat)
-        return (False, None)
+        try:
+            # Use agent's detection method
+            requires, url = self.classifier_agent.detect_external_application(additional_info)
+            return (requires, url)
+        except Exception as e:
+            print(f"      ⚠️  Agent detection failed ({e}), using regex fallback")
+            # Regex fallback
+            text = additional_info.lower()
+            url_match = re.search(r"https?://\S+", additional_info)
+            for pat in self.EXTERNAL_APPLY_PATTERNS:
+                if re.search(pat, text):
+                    return (True, url_match.group(0) if url_match else None)
+            return (False, None)
 
     # ---------- Application flow ----------
     def open_job_details(self, title_element) -> bool:
