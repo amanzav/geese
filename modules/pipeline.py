@@ -216,12 +216,12 @@ class JobAnalyzer:
 
         self.show_summary(all_results[:10])  # Show top 10
         
-        # Cleanup
+        # Cleanup - ensure browser is closed even if errors occurred
         if self.auth:
             try:
                 self.auth.close()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️  Warning: Failed to close browser session: {e}")
         
         return all_results
     
@@ -282,8 +282,8 @@ class JobAnalyzer:
         if self.auth:
             try:
                 self.auth.close()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️  Warning: Failed to close browser session: {e}")
         
         return filtered_results
     
@@ -354,6 +354,15 @@ class JobAnalyzer:
         
         except Exception as e:
             print(f"❌ Error scraping jobs: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Clean up browser on scraping failure
+            if self.auth:
+                try:
+                    self.auth.close()
+                except Exception as cleanup_error:
+                    print(f"⚠️  Warning: Failed to cleanup browser: {cleanup_error}")
             
             # Try to use cached data
             if os.path.exists("data/jobs_scraped.json"):

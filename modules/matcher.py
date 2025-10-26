@@ -71,8 +71,14 @@ class ResumeMatcher:
         try:
             with open(self.cache_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"⚠️  Error parsing match cache JSON: {e}")
+            print(f"   Cache file may be corrupted. Starting with empty cache.")
+            return {}
         except Exception as e:
             print(f"⚠️  Error loading match cache: {e}")
+            import traceback
+            traceback.print_exc()
             return {}
 
     def _load_match_cache(self) -> Dict[str, Dict]:
@@ -91,8 +97,13 @@ class ResumeMatcher:
                     json.dump(self.match_cache, f, indent=2, ensure_ascii=False)
             if self.resources:
                 self.resources.update_match_cache(self.match_cache)
+        except PermissionError as e:
+            print(f"⚠️  Permission denied saving match cache: {e}")
+            print(f"   Check write permissions for: {self.cache_path}")
         except Exception as e:
             print(f"⚠️  Error saving match cache: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _get_cached_match(self, job_id: str) -> Optional[Dict]:
         """Get cached match result for a job ID"""

@@ -65,41 +65,52 @@ class WaterlooWorksAuth:
             self.driver = self._driver_factory()
             self._owns_driver = True
         
-        print("🔑 Logging in to WaterlooWorks...")
-        
-        # Go to login page
-        self.driver.get("https://waterlooworks.uwaterloo.ca/waterloo.htm?action=login")
-        
-        # Enter email
-        print("  → Entering email...")
-        email_field = WebDriverWait(self.driver, TIMEOUT_SHORT).until(
-            EC.presence_of_element_located((By.ID, "userNameInput"))
-        )
-        email_field.send_keys(self.username)
-        self.driver.find_element(By.ID, "nextButton").click()
-        
-        # Enter password
-        print("  → Entering password...")
-        password_field = WebDriverWait(self.driver, TIMEOUT_SHORT).until(
-            EC.presence_of_element_located((By.ID, "passwordInput"))
-        )
-        password_field.send_keys(self.password)
-        self.driver.find_element(By.ID, "submitButton").click()
-        
-        # Wait for Duo 2FA
-        print("\n⏳ Waiting for Duo 2FA (approve on your phone)...")
-        trust_button = WebDriverWait(self.driver, TIMEOUT_LONG).until(
-            EC.presence_of_element_located((By.ID, "trust-browser-button"))
-        )
-        trust_button.click()
-        
-        # Wait for WaterlooWorks to load
-        WebDriverWait(self.driver, TIMEOUT_MEDIUM).until(
-            EC.presence_of_element_located((By.XPATH, '//h1[text()="WaterlooWorks"]'))
-        )
-        
-        print("✅ Login successful!\n")
-        return True
+        try:
+            print("🔑 Logging in to WaterlooWorks...")
+            
+            # Go to login page
+            self.driver.get("https://waterlooworks.uwaterloo.ca/waterloo.htm?action=login")
+            
+            # Enter email
+            print("  → Entering email...")
+            email_field = WebDriverWait(self.driver, TIMEOUT_SHORT).until(
+                EC.presence_of_element_located((By.ID, "userNameInput"))
+            )
+            email_field.send_keys(self.username)
+            self.driver.find_element(By.ID, "nextButton").click()
+            
+            # Enter password
+            print("  → Entering password...")
+            password_field = WebDriverWait(self.driver, TIMEOUT_SHORT).until(
+                EC.presence_of_element_located((By.ID, "passwordInput"))
+            )
+            password_field.send_keys(self.password)
+            self.driver.find_element(By.ID, "submitButton").click()
+            
+            # Wait for Duo 2FA
+            print("\n⏳ Waiting for Duo 2FA (approve on your phone)...")
+            trust_button = WebDriverWait(self.driver, TIMEOUT_LONG).until(
+                EC.presence_of_element_located((By.ID, "trust-browser-button"))
+            )
+            trust_button.click()
+            
+            # Wait for WaterlooWorks to load
+            WebDriverWait(self.driver, TIMEOUT_MEDIUM).until(
+                EC.presence_of_element_located((By.XPATH, '//h1[text()="WaterlooWorks"]'))
+            )
+            
+            print("✅ Login successful!\n")
+            return True
+        except Exception as e:
+            print(f"❌ Login failed: {e}")
+            # Clean up driver on login failure to prevent zombie processes
+            if self._owns_driver and self.driver:
+                try:
+                    self.driver.quit()
+                except Exception as cleanup_error:
+                    print(f"⚠️  Warning: Failed to cleanup driver: {cleanup_error}")
+                self.driver = None
+            raise
     
     def close(self) -> None:
         """Close the browser, if owned by this instance."""
@@ -107,8 +118,16 @@ class WaterlooWorksAuth:
             return
 
         if self._owns_driver:
-            self.driver.quit()
-            print("🔒 Browser closed")
+            try:
+                self.driver.quit()
+                print("🔒 Browser closed")
+            except Exception as e:
+                print(f"⚠️  Warning: Error closing browser: {e}")
+                # Force kill any remaining processes if quit() fails
+                try:
+                    self.driver.service.process.kill()
+                except Exception:
+                    pass  # Best effort cleanup
 
         self.driver = None
 

@@ -100,7 +100,8 @@ class WaterlooWorksScraper:
                 job_id = row.find_element(
                     By.CLASS_NAME, "overflow--ellipsis"
                 ).text.strip()
-            except Exception:
+            except Exception as e:
+                print(f"  ⚠️  Warning: Could not extract job ID: {e}")
                 job_id = ""
 
             # Extract job data from cells
@@ -124,7 +125,9 @@ class WaterlooWorksScraper:
 
             return job_data
         except Exception as e:
-            print(f"Error parsing row: {e}")
+            print(f"⚠️  Error parsing job row: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def get_job_details(self, job_data):
@@ -214,6 +217,8 @@ class WaterlooWorksScraper:
                     sections["compensation"] = comp_data
                 except Exception as e:
                     print(f"  ⚠️  Error extracting compensation: {e}")
+                    import traceback
+                    traceback.print_exc()
                     sections["compensation"] = {
                         "value": None,
                         "currency": None,
@@ -240,7 +245,9 @@ class WaterlooWorksScraper:
             return job_data
 
         except Exception as e:
-            print(f"Error getting job details for {job_data.get('id', 'unknown')}: {e}")
+            print(f"❌ Error getting job details for {job_data.get('id', 'unknown')}: {e}")
+            import traceback
+            traceback.print_exc()
             if "row_element" in job_data:
                 del job_data["row_element"]
             return job_data
