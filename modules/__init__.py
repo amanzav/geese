@@ -35,7 +35,7 @@ def __getattr__(name):  # pragma: no cover - thin convenience wrapper
 
         return CoverLetterUploader
     if name == "FilterEngine":
-        from .filter_engine import FilterEngine
+        from .filters import FilterEngine
 
         return FilterEngine
     if name == "JobAnalyzer":

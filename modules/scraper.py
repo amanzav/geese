@@ -163,44 +163,32 @@ class WaterlooWorksScraper:
             # Extract description sections
             job_divs = job_info.find_elements(By.CLASS_NAME, "js--question--container")
 
-            sections = {
-                "summary": "N/A",
-                "responsibilities": "N/A",
-                "skills": "N/A",
-                "additional_info": "N/A",
-                "employment_location_arrangement": "N/A",
-                "work_term_duration": "N/A",
+            # Section mapping for cleaner extraction
+            SECTION_MAPPINGS = {
+                "Job Summary:": "summary",
+                "Job Responsibilities:": "responsibilities",
+                "Required Skills:": "skills",
+                "Additional Application Information:": "additional_info",
+                "Employment Location Arrangement:": "employment_location_arrangement",
+                "Work Term Duration:": "work_term_duration",
+                "Compensation and Benefits:": "_compensation_raw",  # Special handling below
             }
-            
-            # Store compensation text separately (not in final output)
+
+            sections = {key: "N/A" for key in SECTION_MAPPINGS.values() if not key.startswith("_")}
             compensation_raw = "N/A"
 
             for div in job_divs:
                 text = div.get_attribute("innerText").strip()
-                if text.startswith("Job Summary:"):
-                    sections["summary"] = text.replace("Job Summary:", "", 1).strip()
-                elif text.startswith("Job Responsibilities:"):
-                    sections["responsibilities"] = text.replace(
-                        "Job Responsibilities:", "", 1
-                    ).strip()
-                elif text.startswith("Required Skills:"):
-                    sections["skills"] = text.replace("Required Skills:", "", 1).strip()
-                elif text.startswith("Additional Application Information:"):
-                    sections["additional_info"] = text.replace(
-                        "Additional Application Information:", "", 1
-                    ).strip()
-                elif text.startswith("Employment Location Arrangement:"):
-                    sections["employment_location_arrangement"] = text.replace(
-                        "Employment Location Arrangement:", "", 1
-                    ).strip()
-                elif text.startswith("Work Term Duration:"):
-                    sections["work_term_duration"] = text.replace(
-                        "Work Term Duration:", "", 1
-                    ).strip()
-                elif text.startswith("Compensation and Benefits:"):
-                    compensation_raw = text.replace(
-                        "Compensation and Benefits:", "", 1
-                    ).strip()
+                
+                # Check each section mapping
+                for prefix, section_key in SECTION_MAPPINGS.items():
+                    if text.startswith(prefix):
+                        content = text.replace(prefix, "", 1).strip()
+                        if section_key == "_compensation_raw":
+                            compensation_raw = content
+                        else:
+                            sections[section_key] = content
+                        break  # Found matching section, move to next div
 
             # Extract compensation using LLM
             if compensation_raw != "N/A":

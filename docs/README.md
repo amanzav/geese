@@ -6,6 +6,14 @@ Welcome to the Waterloo Works Automator documentation.
 
 ## 📚 Available Guides
 
+### **[PRD.md](PRD.md)** ⭐ Start Here
+Complete Product Requirements Document:
+- What the project does and why it exists
+- All features explained (matching, cover letters, workflows)
+- Technical architecture and data flow
+- Configuration guide and usage modes
+- Performance benchmarks and security considerations
+
 ### **[MATCHING_ALGORITHM.md](MATCHING_ALGORITHM.md)**
 Complete technical breakdown of the hybrid job matching system:
 - Keyword extraction + semantic search + seniority alignment
@@ -31,11 +39,13 @@ Guide to LLM features (Gemini/OpenAI):
 
 ## 🚀 Quick Start
 
-New users should start with the main [README.md](../README.md) in the project root, then explore these guides based on your needs:
+New users should follow this path:
 
-1. Want to understand **how matching works**? → Read `MATCHING_ALGORITHM.md`
-2. Need to **scrape and apply** to jobs? → Read `WORKFLOWS.md`
-3. Want to **generate cover letters**? → Read `LLM_INTEGRATION.md`
+1. **First Time?** → Start with [README.md](../README.md) for installation
+2. **What is this project?** → Read `PRD.md` for complete overview
+3. **How does matching work?** → Read `MATCHING_ALGORITHM.md`
+4. **How do I use it?** → Read `WORKFLOWS.md`
+5. **Cover letter setup?** → Read `LLM_INTEGRATION.md`
 
 ---
 

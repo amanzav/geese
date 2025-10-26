@@ -13,7 +13,6 @@ except ImportError:  # pragma: no cover - handled in _extract_bullets_from_pdf
     PdfReader = None
 
 from modules.config import AppConfig, load_app_config
-from modules.services import MatcherResourceService, get_matcher_service
 
 if TYPE_CHECKING:  # pragma: no cover - only for static typing
     from modules.embeddings import EmbeddingsManager
@@ -28,35 +27,23 @@ class ResumeMatcher:
         *,
         config_path: str = "config.json",
         cache_path: Optional[str] = None,
-        resume_bullets: Optional[List[str]] = None,
-        embeddings_manager: Optional["EmbeddingsManager"] = None,
-        resources: Optional[MatcherResourceService] = None,
+        resume_cache_path: Optional[str] = None,
     ):
-        """Initialize matcher with configuration and shared resources."""
+        """Initialize matcher with configuration."""
 
         self.config = config or load_app_config(config_path)
         self.matcher_config = self.config.matcher
 
-        if resources is None:
-            resources = get_matcher_service(
-                self.config,
-                cache_path=cache_path or "data/job_matches_cache.json",
-            )
-        elif cache_path:
-            resources.cache_path = cache_path
+        # Cache paths
+        self.cache_path = cache_path or "data/job_matches_cache.json"
+        self.resume_cache_path = resume_cache_path or "data/resume_parsed.txt"
 
-        if resume_bullets is not None:
-            resources.set_resume_bullets(resume_bullets)
-        if embeddings_manager is not None:
-            resources.set_embeddings_manager(embeddings_manager)
-
-        self.resources = resources
-        self.cache_path = self.resources.cache_path
-        self.resume_cache_path = self.resources.resume_cache_path
-
+        # Internal state
+        self._resume_bullets: Optional[List[str]] = None
+        self._embeddings_manager: Optional["EmbeddingsManager"] = None
         self._resume_index_prepared = False
 
-        # Load match cache via shared service
+        # Load match cache
         self.match_cache = self._load_match_cache()
         print(f"📦 Loaded {len(self.match_cache)} cached job matches\n")
     
@@ -82,8 +69,7 @@ class ResumeMatcher:
             return {}
 
     def _load_match_cache(self) -> Dict[str, Dict]:
-        if self.resources:
-            return self.resources.provide_match_cache(self._read_match_cache_from_disk)
+        """Load match cache from disk."""
         return self._read_match_cache_from_disk()
 
     def _save_match_cache(self):
@@ -95,8 +81,6 @@ class ResumeMatcher:
             if self.cache_path and self.cache_path != ":memory:":
                 with open(self.cache_path, 'w', encoding='utf-8') as f:
                     json.dump(self.match_cache, f, indent=2, ensure_ascii=False)
-            if self.resources:
-                self.resources.update_match_cache(self.match_cache)
         except PermissionError as e:
             print(f"⚠️  Permission denied saving match cache: {e}")
             print(f"   Check write permissions for: {self.cache_path}")
@@ -158,7 +142,9 @@ class ResumeMatcher:
 
     def _get_resume_bullets(self) -> List[str]:
         """Return resume bullets, loading from disk if necessary."""
-        return self.resources.provide_resume_bullets(self._load_resume)
+        if self._resume_bullets is None:
+            self._resume_bullets = self._load_resume()
+        return self._resume_bullets
 
     def _create_embeddings_manager(self) -> "EmbeddingsManager":
         from modules.embeddings import EmbeddingsManager  # Local import to avoid heavy dependency unless needed
@@ -167,7 +153,10 @@ class ResumeMatcher:
         return EmbeddingsManager(model_name=model_name)
 
     def _get_embeddings_manager(self) -> "EmbeddingsManager":
-        return self.resources.provide_embeddings(self._create_embeddings_manager)
+        """Return embeddings manager, creating if necessary."""
+        if self._embeddings_manager is None:
+            self._embeddings_manager = self._create_embeddings_manager()
+        return self._embeddings_manager
 
     def _prepare_embeddings(self) -> "EmbeddingsManager":
         embeddings = self._get_embeddings_manager()
@@ -176,8 +165,8 @@ class ResumeMatcher:
             if embeddings.index_exists():
                 print("📂 Loading cached resume embeddings...")
                 embeddings.load_index()
-                if getattr(embeddings, "resume_bullets", None):
-                    self.resources.set_resume_bullets(embeddings.resume_bullets)
+                if hasattr(embeddings, "resume_bullets") and embeddings.resume_bullets:
+                    self._resume_bullets = embeddings.resume_bullets
             else:
                 print("🔨 Building resume embeddings...")
                 embeddings.build_resume_index(resume_bullets)

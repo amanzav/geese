@@ -58,7 +58,7 @@ def run_cli(argv: Optional[Sequence[str]] = None, analyzer: Optional["JobAnalyze
         analyzer = JobAnalyzer()
 
     if args.mode == "realtime":
-        from modules.cli_auth import obtain_authenticated_session
+        from modules.auth import obtain_authenticated_session
 
         auth = obtain_authenticated_session()
         analyzer.run_realtime_pipeline(auto_save_to_folder=True, auth=auth)

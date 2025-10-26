@@ -12,16 +12,14 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from modules.auth import WaterlooWorksAuth
-from modules.filter_engine import FilterEngine
-from modules.filtering import FilterDecision, RealTimeFilterStrategy
+from modules.filters import FilterEngine, FilterDecision
 from modules.scraper import WaterlooWorksScraper
 from modules.matcher import ResumeMatcher
 from modules.results_collector import RealTimeResultsCollector
 from modules.config import load_app_config, resolve_waterlooworks_credentials
-from modules.services import MatcherResourceService, register_matcher_service
 
 try:  # Optional import to avoid circular dependencies in non-CLI usage
-    from modules.cli_auth import obtain_authenticated_session
+    from modules.auth import obtain_authenticated_session
 except ImportError:  # pragma: no cover - fallback for environments without CLI helpers
     obtain_authenticated_session = None
 
@@ -32,9 +30,7 @@ class JobAnalyzer:
     def __init__(self, config_path: str = "config.json"):
         """Initialize analyzer with configuration"""
         self.config = load_app_config(config_path)
-        resources = MatcherResourceService(self.config)
-        register_matcher_service(resources)
-        self.matcher = ResumeMatcher(config=self.config, resources=resources)
+        self.matcher = ResumeMatcher(config=self.config)
         self.auth: Optional[WaterlooWorksAuth] = None  # Will be set during scraping
         self.scraper = None  # Will be set during scraping
         self.filter_engine = FilterEngine(self.config)
@@ -65,11 +61,11 @@ class JobAnalyzer:
         print()
         
         # Get configuration
-        filter_strategy = RealTimeFilterStrategy(self.config)
+        filter_engine = self.filter_engine
         collector = RealTimeResultsCollector()
 
-        auto_save_threshold = filter_strategy.auto_save_threshold
-        folder_name = filter_strategy.folder_name
+        auto_save_threshold = self.config.get("matcher", {}).get("auto_save_threshold", 30)
+        folder_name = self.config.get("waterlooworks_folder", "geese")
 
         print(f"⚙️  Auto-save threshold: {auto_save_threshold}")
         print(f"📁 Target folder: '{folder_name}'")
@@ -152,7 +148,7 @@ class JobAnalyzer:
                     
                     print(f"           {emoji} FIT SCORE: {fit_score}/100")
                     
-                    decision: FilterDecision = filter_strategy.decide(
+                    decision: FilterDecision = filter_engine.decide_realtime(
                         job_data, match, auto_save_to_folder
                     )
 
@@ -341,8 +337,7 @@ class JobAnalyzer:
             # DON'T close browser yet if we need to auto-save to folder
             # Browser will be closed at the end of the pipeline
             
-            # Final normalization and save
-            jobs = self._normalize_job_data(jobs)
+            # Final save
             with open(cache_path, 'w', encoding='utf-8') as f:
                 json.dump(jobs, f, indent=2, ensure_ascii=False)
             
@@ -413,15 +408,10 @@ class JobAnalyzer:
         resolved_auth = self._resolve_auth(None)
         return resolved_auth, resolved_auth.driver
     
-    def _normalize_job_data(self, jobs: List[Dict]) -> List[Dict]:
-        """Normalize job data format for consistency"""
-        # No normalization needed anymore - scraper already uses 'location'
-        return jobs
-    
     def apply_filters(self, results: List[Dict]) -> List[Dict]:
         """Apply configured filters to the analyzed results."""
         self.filter_engine.update_config(self.config)
-        return self.filter_engine.apply(results)
+        return self.filter_engine.apply_batch(results)
     
     def auto_save_to_folder(self, results: List[Dict]):
         """

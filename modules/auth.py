@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+import getpass
+from typing import Callable, Optional, Tuple
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -136,3 +137,30 @@ class WaterlooWorksAuth:
 
     def __exit__(self, exc_type, exc, traceback) -> None:
         self.close()
+
+
+def prompt_for_credentials(
+    username: Optional[str] = None, password: Optional[str] = None
+) -> Tuple[str, str]:
+    """Prompt for credentials, falling back to environment variables."""
+
+    resolved_username, resolved_password = resolve_waterlooworks_credentials(username, password)
+
+    if not resolved_username:
+        resolved_username = input("Username (UW email): ").strip()
+
+    if not resolved_password:
+        resolved_password = getpass.getpass("Password: ")
+
+    return resolved_username, resolved_password
+
+
+def obtain_authenticated_session(
+    username: Optional[str] = None, password: Optional[str] = None
+) -> WaterlooWorksAuth:
+    """Authenticate with WaterlooWorks and return the session wrapper."""
+
+    resolved_username, resolved_password = prompt_for_credentials(username, password)
+    auth = WaterlooWorksAuth(resolved_username, resolved_password)
+    auth.login()
+    return auth
