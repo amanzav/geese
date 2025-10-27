@@ -78,33 +78,6 @@ class FilterEngine:
 
         return filtered
 
-    def _should_skip_job(self, job_data: Dict) -> tuple[bool, str]:
-        """
-        Determine if a job should be skipped entirely.
-        
-        Returns:
-            Tuple of (should_skip, reason)
-        """
-        # Location filter
-        if self.preferred_locations:
-            location = job_data.get("location", "").lower()
-            if not any(loc in location for loc in self.preferred_locations):
-                return True, "location filter"
-
-        # Keyword filter
-        if self.keywords:
-            job_text = self._aggregate_job_text(job_data)
-            if not any(keyword in job_text for keyword in self.keywords):
-                return True, "keyword filter"
-
-        # Company filter
-        if self.avoid_companies:
-            company = job_data.get("company", "").lower()
-            if company and any(comp in company for comp in self.avoid_companies):
-                return True, "company filter"
-
-        return False, ""
-
     @staticmethod
     def _aggregate_job_text(job_data: Dict) -> str:
         """Aggregate all searchable text from a job into one string."""

@@ -41,7 +41,7 @@ def get_cell_text(cell, default="N/A"):
         elem = cell.find_element(By.CLASS_NAME, "overflow--ellipsis")
         text = elem.get_attribute("innerText")
         return text.strip() if text else default
-    except Exception:
+    except Exception as e:
         return default
 
 
@@ -50,7 +50,7 @@ def calculate_chances(openings, applications):
         openings_int = int(openings)
         applications_int = int(applications)
         return round(openings_int / applications_int, 3) if applications_int > 0 else 0.0
-    except Exception:
+    except Exception as e:
         return 0.0
 
 
@@ -118,7 +118,7 @@ def get_pagination_pages(driver) -> int:
         )
         page_buttons = len(pagination.find_elements(By.TAG_NAME, "li")) - 4
         return max(page_buttons, 1)
-    except Exception:
+    except Exception as e:
         return 1
 
 
@@ -150,7 +150,7 @@ def close_job_details_panel(driver) -> bool:
             time.sleep(1)
             return True
         return False
-    except Exception:
+    except Exception as e:
         return False
 
 
@@ -185,7 +185,7 @@ def smart_page_wait(driver, expected_element=None, max_wait=None, poll=0.1):
                 lambda d: d.execute_script("return document.readyState") == "complete"
             )
         return True
-    except Exception:
+    except Exception as e:
         return False
 
 
@@ -239,7 +239,7 @@ def fast_presence_check(driver, selector, by=By.CSS_SELECTOR, timeout=None):
         return WebDriverWait(driver, timeout, poll_frequency=0.05).until(
             EC.presence_of_element_located((by, selector))
         )
-    except Exception:
+    except Exception as e:
         return None
 
 

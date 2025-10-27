@@ -39,10 +39,7 @@ class WaterlooWorksAuth:
         self.username = resolved_username
         self.password = resolved_password
         self.driver: Optional[webdriver.Chrome] = driver
-        if driver is not None:
-            self._driver_factory = driver_factory
-        else:
-            self._driver_factory = driver_factory or self._default_driver_factory
+        self._driver_factory = driver_factory or self._default_driver_factory
         self._owns_driver = driver is None
 
     @staticmethod
