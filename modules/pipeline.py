@@ -1,9 +1,7 @@
 """Waterloo Works Automator - Main Pipeline.
 
 This module coordinates scraping, analysis, and persistence of WaterlooWorks
-job postings. Real-time processing is supported through dedicated helper
-objects that encapsulate filtering logic, credential handling, and result
-collection.
+job postings.
 """
 
 import json
@@ -13,10 +11,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from modules.auth import WaterlooWorksAuth
-from modules.filters import FilterEngine, FilterDecision
+from modules.filters import FilterEngine
 from modules.scraper import WaterlooWorksScraper
 from modules.matcher import ResumeMatcher
-from modules.results_collector import RealTimeResultsCollector
 from modules.config import load_app_config, resolve_waterlooworks_credentials
 from modules.database import get_db
 from modules.utils import get_pagination_pages, go_to_next_page, close_job_details_panel
@@ -45,190 +42,6 @@ class JobAnalyzer:
         self.filter_engine = FilterEngine(self.config)
         print("✅ Job Analyzer initialized\n")
 
-    def run_realtime_pipeline(
-        self,
-        auto_save_to_folder: bool = True,
-        auth: Optional[WaterlooWorksAuth] = None,
-        driver=None,
-    ) -> List[Dict]:
-        """
-        Run REAL-TIME pipeline: scrape → analyze → save IMMEDIATELY per job
-
-        Shows score for each job as it's processed and saves high-scoring jobs instantly.
-
-        Args:
-            auto_save_to_folder: If True, save high-scoring jobs to WW folder immediately
-            auth: Optional pre-authenticated WaterlooWorks session
-            driver: Optional Selenium driver if already authenticated
-
-        Returns:
-            List of analyzed jobs sorted by fit score
-        """
-        print("=" * 70)
-        print("🚀 WATERLOO WORKS REAL-TIME JOB ANALYZER")
-        print("=" * 70)
-        print()
-        
-        # Get configuration
-        filter_engine = self.filter_engine
-        collector = RealTimeResultsCollector()
-
-        auto_save_threshold = self.config.get("matcher", {}).get("auto_save_threshold", 30)
-        folder_name = self.config.get("waterlooworks_folder", "geese")
-
-        print(f"⚙️  Auto-save threshold: {auto_save_threshold}")
-        print(f"📁 Target folder: '{folder_name}'")
-        print()
-
-        # Step 1: Login and navigate
-        if auth or driver:
-            print("🔐 Using existing WaterlooWorks session")
-        else:
-            print("🔐 Logging into WaterlooWorks...")
-
-        resolved_auth, resolved_driver = self._ensure_session(auth, driver)
-        self.auth = resolved_auth
-
-        llm_provider = self.config.get("matcher", {}).get("llm_provider", "gemini")
-        scraper = WaterlooWorksScraper(resolved_driver, llm_provider=llm_provider)
-        self.scraper = scraper
-        scraper.go_to_jobs_page()
-        
-        # Step 2: Process jobs in real-time
-        try:
-            # Get pagination info
-            try:
-                num_pages = get_pagination_pages(resolved_driver)
-                print(f"📄 Total pages to process: {num_pages}\n")
-            except Exception:
-                num_pages = 1
-                print("📄 Single page detected\n")
-            
-            print("=" * 70)
-            print("🔄 PROCESSING JOBS IN REAL-TIME")
-            print("=" * 70)
-            print()
-            
-            # Process each page
-            for page in range(1, num_pages + 1):
-                print(f"📄 Page {page}/{num_pages}")
-                print("-" * 70)
-                
-                rows = scraper.get_job_table()
-
-                for _, row in enumerate(rows, 1):
-                    # Parse basic job info
-                    job_data = scraper.parse_job_row(row)
-                    if not job_data or not job_data.get('id'):
-                        continue
-
-                    collector.start_job()
-
-                    # Show job being processed
-                    print(
-                        f"\n[Job {collector.total_jobs}] {job_data.get('title', 'Unknown')} @ "
-                        f"{job_data.get('company', 'N/A')}"
-                    )
-                    print(f"           📍 {job_data.get('location', 'N/A')}")
-
-                    # Get detailed job info
-                    print(f"           🔍 Scraping details...", end=" ")
-                    job_data = scraper.get_job_details(job_data)
-                    print("✓")
-
-                    # Analyze match IMMEDIATELY
-                    print(f"           🧠 Analyzing match...", end=" ")
-                    result = self.matcher.analyze_single_job(job_data)
-                    print("✓")
-
-                    # Extract score
-                    match = result["match"]
-                    fit_score = match["fit_score"]
-
-                    # Show score with color coding
-                    if fit_score >= 70:
-                        emoji = "🟢"
-                    elif fit_score >= 50:
-                        emoji = "🟡"
-                    elif fit_score >= 30:
-                        emoji = "🟠"
-                    else:
-                        emoji = "🔴"
-                    
-                    print(f"           {emoji} FIT SCORE: {fit_score}/100")
-                    
-                    decision: FilterDecision = filter_engine.decide_realtime(
-                        job_data, match, auto_save_to_folder
-                    )
-
-                    if decision.skip:
-                        if decision.message:
-                            print(f"           ⏭️  {decision.message}")
-                        collector.record_skipped()
-                        close_job_details_panel(resolved_driver)
-                    elif decision.auto_save:
-                        print(f"           💾 Saving to '{folder_name}' folder...", end=" ")
-
-                        job_data["row_element"] = row
-                        success = scraper.save_job_to_folder(job_data, folder_name=folder_name)
-
-                        if success:
-                            print("✅ SAVED!")
-                            collector.record_saved()
-                        else:
-                            print("❌ Failed")
-                            collector.record_skipped()
-                            close_job_details_panel(resolved_driver)
-
-                        job_data.pop("row_element", None)
-                    else:
-                        if decision.message:
-                            print(f"           ⏭️  {decision.message}")
-                        collector.record_skipped()
-                        close_job_details_panel(resolved_driver)
-
-                    # Store result
-                    collector.add_result(result)
-                
-                # Go to next page
-                if page < num_pages:
-                    print(f"\n➡️  Moving to page {page + 1}...")
-                    go_to_next_page(resolved_driver)
-                    print()
-        
-        except KeyboardInterrupt:
-            print("\n\n⚠️  Process interrupted by user")
-        except Exception as e:
-            print(f"\n\n❌ Error during processing: {e}")
-            traceback.print_exc()
-        
-        # Step 3: Save results to files
-        print("\n" + "=" * 70)
-        print("💾 SAVING RESULTS TO FILES")
-        print("=" * 70)
-
-        all_results = collector.persist(self.save_results)
-
-        # Step 4: Show final summary
-        print("\n" + "=" * 70)
-        print("📊 FINAL SUMMARY")
-        print("=" * 70)
-        print(f"Total jobs processed: {collector.total_jobs}")
-        print(f"✅ Saved to WW folder: {collector.saved_count}")
-        print(f"⏭️  Skipped/Low score: {collector.skipped_count}")
-        print()
-
-        self.show_summary(all_results[:10])  # Show top 10
-        
-        # Cleanup - ensure browser is closed even if errors occurred
-        if self.auth:
-            try:
-                self.auth.close()
-            except Exception as e:
-                print(f"⚠️  Warning: Failed to close browser session: {e}")
-        
-        return all_results
-    
     def run_full_pipeline(self, detailed: bool = True, force_rematch: bool = False, auto_save_to_folder: bool = False) -> List[Dict]:
         """
         Run complete pipeline: scrape → match → filter → save (+ optional auto-save to WW folder)
@@ -236,7 +49,7 @@ class JobAnalyzer:
         Args:
             detailed: Whether to scrape detailed job info (slower but better)
             force_rematch: If True, ignore cached matches and recalculate all
-            auto_save_to_folder: If True, automatically save high-scoring jobs to "geese" folder
+            auto_save_to_folder: If True, automatically save high-scoring jobs to configured folder
         
         Returns:
             List of analyzed jobs sorted by fit score
@@ -299,7 +112,9 @@ class JobAnalyzer:
         """Scrape jobs from WaterlooWorks with incremental saving"""
         try:
             # Load existing jobs from database
-            os.makedirs("data", exist_ok=True)
+            paths_config = self.config.get("paths", {})
+            data_dir = paths_config.get("data_dir", "data")
+            os.makedirs(data_dir, exist_ok=True)
             existing_jobs = {}
 
             if self.use_database:

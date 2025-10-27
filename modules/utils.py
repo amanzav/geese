@@ -19,7 +19,6 @@ PAGE_LOAD = 0.5  # Optimized from 2s to 0.5s
 # ============================================
 
 class WaitTimes:
-    """Configurable wait times for different operation types"""
     INSTANT = 0.05     # Immediate DOM updates
     FAST = 0.3         # Simple page updates
     MEDIUM = 0.8       # Modal/dialog loading
@@ -38,16 +37,6 @@ SELECTORS = {
 
 
 def get_cell_text(cell, default="N/A"):
-    """
-    Safely extract text from a table cell with overflow--ellipsis class
-    
-    Args:
-        cell: Selenium WebElement (table cell)
-        default: Default value if extraction fails
-        
-    Returns:
-        str: Extracted text or default value
-    """
     try:
         elem = cell.find_element(By.CLASS_NAME, "overflow--ellipsis")
         text = elem.get_attribute("innerText")
@@ -57,16 +46,6 @@ def get_cell_text(cell, default="N/A"):
 
 
 def calculate_chances(openings, applications):
-    """
-    Calculate chances ratio (openings/applications)
-    
-    Args:
-        openings: Number of openings (str or int)
-        applications: Number of applications (str or int)
-        
-    Returns:
-        float: Chances ratio rounded to 3 decimals
-    """
     try:
         openings_int = int(openings)
         applications_int = int(applications)
@@ -76,18 +55,6 @@ def calculate_chances(openings, applications):
 
 
 def sanitize_filename(text: str) -> str:
-    r"""
-    Sanitize text for use in filenames (Windows-compatible)
-    
-    Removes/replaces characters that are invalid in Windows filenames:
-    < > : " / \ | ? *
-    
-    Args:
-        text: Text to sanitize
-        
-    Returns:
-        Sanitized text safe for filenames
-    """
     text = text.replace('/', '_')
     text = text.replace('\\', '_')
     text = text.replace(':', '_')
@@ -111,16 +78,6 @@ def sanitize_filename(text: str) -> str:
 
 
 def navigate_to_folder(driver, folder_name: str) -> bool:
-    """
-    Navigate to a specific WaterlooWorks folder - OPTIMIZED
-    
-    Args:
-        driver: Selenium WebDriver instance
-        folder_name: Name of the folder to navigate to
-        
-    Returns:
-        True if successful, False otherwise
-    """
     try:
         driver.get("https://waterlooworks.uwaterloo.ca/myAccount/co-op/full/jobs.htm")
         
@@ -155,15 +112,6 @@ def navigate_to_folder(driver, folder_name: str) -> bool:
 
 
 def get_pagination_pages(driver) -> int:
-    """
-    Get the number of pages in pagination
-    
-    Args:
-        driver: Selenium WebDriver instance
-        
-    Returns:
-        Number of pages (minimum 1)
-    """
     try:
         pagination = WebDriverWait(driver, TIMEOUT).until(
             EC.presence_of_element_located((By.CLASS_NAME, "pagination"))
@@ -175,12 +123,6 @@ def get_pagination_pages(driver) -> int:
 
 
 def go_to_next_page(driver):
-    """
-    Navigate to the next page in pagination - OPTIMIZED
-    
-    Args:
-        driver: Selenium WebDriver instance
-    """
     try:
         pagination = fast_presence_check(driver, ".pagination", by=By.CLASS_NAME, timeout=TIMEOUT)
         if not pagination:
@@ -201,15 +143,6 @@ def go_to_next_page(driver):
 
 
 def close_job_details_panel(driver) -> bool:
-    """
-    Close the currently open job details panel
-    
-    Args:
-        driver: Selenium WebDriver instance
-        
-    Returns:
-        True if successful, False otherwise
-    """
     try:
         close_buttons = driver.find_elements(By.CSS_SELECTOR, SELECTORS["close_panel_button"])
         if close_buttons:
@@ -222,12 +155,6 @@ def close_job_details_panel(driver) -> bool:
 
 
 def get_jobs_from_page(driver):
-    """
-    Get all job listings from the current page
-    
-    Returns:
-        List of job row elements
-    """
     try:
         time.sleep(PAGE_LOAD)
         job_rows = WebDriverWait(driver, TIMEOUT).until(
@@ -244,25 +171,6 @@ def get_jobs_from_page(driver):
 # ============================================
 
 def smart_page_wait(driver, expected_element=None, max_wait=None, poll=0.1):
-    """
-    Intelligent wait that returns as soon as page is ready.
-    
-    Args:
-        driver: Selenium WebDriver
-        expected_element: Optional tuple (By.X, "selector") to wait for
-        max_wait: Maximum time to wait (defaults to WaitTimes.SLOW)
-        poll: Polling frequency (check every X seconds)
-        
-    Returns:
-        bool: True if successful, False if timeout
-        
-    Example:
-        # Wait for specific element
-        smart_page_wait(driver, (By.CLASS_NAME, "job-table"), max_wait=2.0)
-        
-        # Wait for page ready
-        smart_page_wait(driver)
-    """
     if max_wait is None:
         max_wait = WaitTimes.SLOW
         
@@ -282,23 +190,6 @@ def smart_page_wait(driver, expected_element=None, max_wait=None, poll=0.1):
 
 
 def click_and_wait(driver, element, wait_for=None, max_wait=None):
-    """
-    Click element and optionally wait for expected condition.
-    
-    Args:
-        driver: Selenium WebDriver
-        element: Element to click (WebElement)
-        wait_for: Optional (By.X, "selector") tuple for element to appear after click
-        max_wait: Maximum wait time (defaults to WaitTimes.FAST)
-        
-    Returns:
-        bool: True if successful
-        
-    Example:
-        # Click button and wait for modal to appear
-        button = driver.find_element(By.ID, "submit")
-        click_and_wait(driver, button, wait_for=(By.CLASS_NAME, "modal"))
-    """
     if max_wait is None:
         max_wait = WaitTimes.FAST
         
@@ -317,21 +208,6 @@ def click_and_wait(driver, element, wait_for=None, max_wait=None):
 
 
 def smart_element_click(driver, element, scroll_first=True):
-    """
-    Reliably click element with smart scrolling and minimal waits.
-    
-    Args:
-        driver: Selenium WebDriver
-        element: Element to click
-        scroll_first: Whether to scroll element into view
-        
-    Returns:
-        bool: True if successful
-        
-    Example:
-        link = row.find_element(By.TAG_NAME, "a")
-        smart_element_click(driver, link)
-    """
     try:
         if scroll_first:
             # Scroll to center with instant behavior
@@ -356,23 +232,6 @@ def smart_element_click(driver, element, scroll_first=True):
 
 
 def fast_presence_check(driver, selector, by=By.CSS_SELECTOR, timeout=None):
-    """
-    Quickly check if element is present with fast polling.
-    
-    Args:
-        driver: Selenium WebDriver
-        selector: Element selector
-        by: Selenium By type (default: By.CSS_SELECTOR)
-        timeout: Maximum wait time (defaults to WaitTimes.FAST)
-        
-    Returns:
-        WebElement or None
-        
-    Example:
-        modal = fast_presence_check(driver, ".modal-dialog")
-        if modal:
-            # Modal found
-    """
     if timeout is None:
         timeout = WaitTimes.FAST
         
@@ -389,13 +248,6 @@ from contextlib import contextmanager
 
 @contextmanager
 def timer(operation_name: str):
-    """
-    Context manager to time operations
-    
-    Usage:
-        with timer("Scraping 10 jobs"):
-            scraper.scrape_current_page()
-    """
     start = time.time()
     yield
     elapsed = time.time() - start

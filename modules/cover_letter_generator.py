@@ -5,6 +5,7 @@ import re
 import time
 import json
 from pathlib import Path
+from typing import Optional, List, Dict
 from docx import Document
 from docx.shared import Pt
 from docx2pdf import convert
@@ -25,25 +26,19 @@ from .agents import AgentFactory
 class CoverLetterGenerator:
     """Generate and manage cover letters for job applications"""
 
-    def __init__(self, driver, resume_text, prompt_template, api_key=None, cover_letters_folder="cover_letters"):
-        """
-        Initialize cover letter generator
-        
-        Args:
-            driver: Selenium WebDriver instance
-            resume_text: User's resume text for context
-            prompt_template: Template for LLM prompt (deprecated - uses agent)
-            api_key: Google API key (deprecated - uses agent config)
-            cover_letters_folder: Folder to save cover letters (default: "cover_letters")
-        """
+    def __init__(self, driver, resume_text, prompt_template, api_key=None, cover_letters_folder: Optional[str] = None):
         self.driver = driver
         self.resume_text = resume_text
         self.prompt_template = prompt_template  # Keep for backwards compatibility
-        self.cover_letters_dir = Path(cover_letters_folder)
-        self.cover_letters_dir.mkdir(exist_ok=True)
         
         # Load config
         config = load_app_config()
+        
+        if cover_letters_folder is None:
+            cover_letters_folder = config.get("paths", {}).get("cover_letters_dir", "cover_letters")
+        
+        self.cover_letters_dir = Path(cover_letters_folder)
+        self.cover_letters_dir.mkdir(exist_ok=True)
         
         # Initialize agent factory
         agent_config = {
@@ -62,36 +57,16 @@ class CoverLetterGenerator:
         print(f"✅ CoverLetterGenerator initialized with {self.agent.provider}/{self.agent.model}")
         
     def get_document_name(self, company, job_title):
-        """Generate standardized document name"""
         company_clean = sanitize_filename(company)
         title_clean = sanitize_filename(job_title)
         return f"{company_clean}_{title_clean}"
     
     def cover_letter_exists(self, company, job_title):
-        """
-        Check if cover letter already exists
-        
-        Args:
-            company: Company name
-            job_title: Job title
-            
-        Returns:
-            True if PDF exists, False otherwise
-        """
         doc_name = self.get_document_name(company, job_title)
         pdf_path = self.cover_letters_dir / f"{doc_name}.pdf"
         return pdf_path.exists()
     
-    def navigate_to_geese_jobs(self):
-        """Navigate to the Geese Jobs (shortlisted) section"""
-        print("\n🦢 Navigating to Geese Jobs section...")
-        success = navigate_to_folder(self.driver, "geese")
-        if success:
-            print("   ✓ Successfully navigated to Geese Jobs")
-        return success
-    
-    def get_geese_jobs_from_page(self):
-        """Get all job listings from the current Geese Jobs page"""
+    def parse_jobs_from_page(self):
         jobs = []
         try:
             job_rows = get_jobs_from_page(self.driver)
@@ -124,69 +99,95 @@ class CoverLetterGenerator:
             print(f"   ✗ Error getting jobs from page: {e}")
             return []
     
-    def get_job_details(self, job_basic_info, cached_jobs=None):
-        """
-        Get full job details from cache ONLY
+    def get_job_details_from_cache(self, job_id: str, cached_jobs: List[Dict]) -> Optional[Dict]:
+        if not cached_jobs:
+            return None
         
-        Args:
-            job_basic_info: Dictionary with job_id, job_title, company
-            cached_jobs: List of previously scraped jobs
+        # Simple ID matching
+        for job in cached_jobs:
+            if job.get("id") == job_id or job.get("job_id") == job_id:
+                print(f"      ✓ Found in cache")
+                
+                # Build description from key fields
+                desc_parts = []
+                if job.get("summary") and job["summary"] != "N/A":
+                    desc_parts.append(f"Job Summary:\n{job['summary']}")
+                if job.get("responsibilities") and job["responsibilities"] != "N/A":
+                    desc_parts.append(f"\nResponsibilities:\n{job['responsibilities']}")
+                if job.get("skills") and job["skills"] != "N/A":
+                    desc_parts.append(f"\nRequired Skills:\n{job['skills']}")
+                if job.get("additional_info") and job["additional_info"] != "N/A":
+                    desc_parts.append(f"\nAdditional Info:\n{job['additional_info']}")
+                
+                description = "\n".join(desc_parts)
+                
+                return {
+                    "job_id": job_id,
+                    "job_title": job.get("title", ""),
+                    "company": job.get("company", ""),
+                    "description": description
+                }
+        
+        return None  # Not in cache
+    
+    def scrape_and_cache_job(self, job_basic_info: Dict, cached_jobs_path: str) -> Optional[Dict]:
+        from .scraper import WaterlooWorksScraper
+        
+        print(f"      🔍 Not in cache - scraping live...")
+        
+        try:
+            # Create a temporary scraper to get details
+            scraper = WaterlooWorksScraper(self.driver)
             
-        Returns:
-            Dictionary with full job details or None
-        """
-        job_id = job_basic_info["job_id"]
-        
-        # ONLY use cached data - don't try to scrape
-        if cached_jobs:
-            for cached_job in cached_jobs:
-                # Match by ID or by company+title
-                if (cached_job.get("id") == job_id or 
-                    cached_job.get("job_id") == job_id or
-                    (cached_job.get("company") == job_basic_info["company"] and 
-                     cached_job.get("title") == job_basic_info["job_title"])):
-                    print(f"      ✓ Using cached data")
-                    
-                    # Combine all relevant fields into description
-                    description_parts = []
-                    
-                    if cached_job.get("summary"):
-                        description_parts.append(f"Job Summary:\n{cached_job['summary']}")
-                    
-                    if cached_job.get("responsibilities"):
-                        description_parts.append(f"\nResponsibilities:\n{cached_job['responsibilities']}")
-                    
-                    if cached_job.get("skills"):
-                        description_parts.append(f"\nRequired Skills:\n{cached_job['skills']}")
-                    
-                    if cached_job.get("additional_info") and cached_job["additional_info"] != "N/A":
-                        description_parts.append(f"\nAdditional Info:\n{cached_job['additional_info']}")
-                    
-                    full_description = "\n".join(description_parts)
-                    
-                    return {
-                        "job_id": job_id,
-                        "job_title": cached_job.get("title", job_basic_info["job_title"]),
-                        "company": cached_job.get("company", job_basic_info["company"]),
-                        "description": full_description
-                    }
-        
-        # Not in cache - skip this job
-        print(f"      ✗ Not in cache, skipping (scraping disabled)")
-        return None
+            # Add row_element for scraper to click
+            job_basic_info["row_element"] = job_basic_info.get("title_element")
+            
+            # Scrape full details
+            job_data = scraper.get_job_details(job_basic_info)
+            
+            if not job_data:
+                print(f"      ✗ Failed to scrape job details")
+                return None
+            
+            # Add to cache file
+            cached_jobs = []
+            if os.path.exists(cached_jobs_path):
+                with open(cached_jobs_path, 'r', encoding='utf-8') as f:
+                    cached_jobs = json.load(f)
+            
+            cached_jobs.append(job_data)
+            
+            # Save updated cache
+            with open(cached_jobs_path, 'w', encoding='utf-8') as f:
+                json.dump(cached_jobs, f, indent=2, ensure_ascii=False)
+            
+            print(f"      ✓ Scraped and cached job details")
+            
+            # Build description for cover letter generation
+            desc_parts = []
+            if job_data.get("summary") and job_data["summary"] != "N/A":
+                desc_parts.append(f"Job Summary:\n{job_data['summary']}")
+            if job_data.get("responsibilities") and job_data["responsibilities"] != "N/A":
+                desc_parts.append(f"\nResponsibilities:\n{job_data['responsibilities']}")
+            if job_data.get("skills") and job_data["skills"] != "N/A":
+                desc_parts.append(f"\nRequired Skills:\n{job_data['skills']}")
+            if job_data.get("additional_info") and job_data["additional_info"] != "N/A":
+                desc_parts.append(f"\nAdditional Info:\n{job_data['additional_info']}")
+            
+            description = "\n".join(desc_parts)
+            
+            return {
+                "job_id": job_data.get("id"),
+                "job_title": job_data.get("title", ""),
+                "company": job_data.get("company", ""),
+                "description": description
+            }
+            
+        except Exception as e:
+            print(f"      ✗ Error scraping job: {e}")
+            return None
     
     def generate_cover_letter_text(self, company, job_title, description):
-        """
-        Generate cover letter text using CoverLetterAgent
-        
-        Args:
-            company: Company name
-            job_title: Job title
-            description: Job description
-            
-        Returns:
-            Generated cover letter text or None
-        """
         try:
             # Use the agent's generate method
             result = self.agent.generate_cover_letter(
@@ -208,48 +209,7 @@ class CoverLetterGenerator:
             print(f"      ✗ Error generating cover letter: {str(e)[:100]}")
             return None
     
-    def _filter_text(self, output: str) -> str:
-        """
-        Filter and clean the generated text (deprecated - kept for backwards compatibility)
-        
-        Args:
-            output: Raw LLM output
-            
-        Returns:
-            Cleaned text
-        """
-        # Remove citation markers like [[1]]
-        pattern = r"\[\[\d+\]\]"
-        output = re.sub(pattern, "", output)
-        
-        # Extract text between markers
-        start = "Dear Hiring Manager,"
-        end = "Aman Zaveri"
-        
-        idx1 = output.find(start)
-        idx2 = output.find(end)
-        
-        if idx1 == -1 or idx2 == -1:
-            # Markers not found, return cleaned output
-            return output.strip()
-        
-        final_output = output[idx1 + len(start) + 1 : idx2]
-        final_output = bytes(final_output, "utf-8").decode("unicode_escape")
-        return final_output.strip()
-    
     def save_cover_letter(self, company, job_title, cover_text, template_path="template.docx"):
-        """
-        Save cover letter as PDF
-        
-        Args:
-            company: Company name
-            job_title: Job title
-            cover_text: Generated cover letter text
-            template_path: Path to Word template
-            
-        Returns:
-            True if successful, False otherwise
-        """
         doc_name = self.get_document_name(company, job_title)
         
         try:
@@ -287,16 +247,14 @@ Aman Zaveri"""
             print(f"      ✗ Error saving cover letter: {e}")
             return False
     
-    def generate_all_cover_letters(self, cached_jobs_path=None):
-        """
-        Main method to generate cover letters for all Geese Jobs
+    def generate_all_cover_letters(self, folder_name: str, cached_jobs_path=None):
+        if not folder_name:
+            raise ValueError(
+                "folder_name is required for cover letter generation. "
+                "You must specify which WaterlooWorks folder to generate cover letters for. "
+                "This prevents accidentally generating cover letters for all 2000+ jobs."
+            )
         
-        Args:
-            cached_jobs_path: Path to cached jobs JSON file (optional)
-            
-        Returns:
-            Dictionary with statistics
-        """
         stats = {
             "total_jobs": 0,
             "skipped_existing": 0,
@@ -314,9 +272,11 @@ Aman Zaveri"""
             except Exception as e:
                 print(f"⚠ Could not load cached jobs: {e}")
         
-        # Navigate to Geese Jobs
-        if not self.navigate_to_geese_jobs():
+        # Navigate to specified folder
+        print(f"\n📁 Navigating to '{folder_name}' folder...")
+        if not navigate_to_folder(self.driver, folder_name):
             return stats
+        print(f"   ✓ Successfully navigated to '{folder_name}' folder")
         
         # Get number of pages
         num_pages = get_pagination_pages(self.driver)
@@ -328,7 +288,7 @@ Aman Zaveri"""
             print(f"\n📊 Extracting jobs from page {page}/{num_pages}...")
             
             # Get jobs from current page
-            jobs = self.get_geese_jobs_from_page()
+            jobs = self.parse_jobs_from_page()
             all_jobs.extend(jobs)
             
             print(f"   ✓ Extracted {len(jobs)} jobs from page {page}")
@@ -341,7 +301,7 @@ Aman Zaveri"""
         stats["total_jobs"] = len(all_jobs)
         
         if not all_jobs:
-            print("No jobs found in Geese Jobs section")
+            print(f"No jobs found in '{folder_name}' folder")
             return stats
         
         print(f"\n🎯 Processing {len(all_jobs)} jobs total...")
@@ -350,6 +310,7 @@ Aman Zaveri"""
         for idx, job_basic in enumerate(all_jobs, 1):
             company = job_basic["company"]
             job_title = job_basic["job_title"]
+            job_id = job_basic["job_id"]
             
             print(f"\n[{idx}/{len(all_jobs)}] {company} - {job_title}")
             
@@ -359,11 +320,15 @@ Aman Zaveri"""
                 stats["skipped_existing"] += 1
                 continue
             
-            # Get full job details
-            job_details = self.get_job_details(job_basic, cached_jobs)
+            # Try to get from cache first
+            job_details = self.get_job_details_from_cache(job_id, cached_jobs or [])
+            
+            # If not in cache, scrape it and add to cache
+            if not job_details and cached_jobs_path:
+                job_details = self.scrape_and_cache_job(job_basic, cached_jobs_path)
             
             if not job_details:
-                print(f"      ⏭ Skipping (no cached data available)")
+                print(f"      ✗ Could not get job details")
                 stats["failed"] += 1
                 continue
             
@@ -396,21 +361,18 @@ Aman Zaveri"""
 
 
 class CoverLetterUploader:
-    """Upload cover letters to WaterlooWorks"""
     
-    def __init__(self, driver, cover_letters_folder="cover_letters"):
-        """
-        Initialize uploader
-        
-        Args:
-            driver: Selenium WebDriver instance
-            cover_letters_folder: Folder containing cover letters (default: "cover_letters")
-        """
+    def __init__(self, driver, cover_letters_folder: Optional[str] = None):
         self.driver = driver
+        
+        if cover_letters_folder is None:
+            from .config import load_app_config
+            config = load_app_config()
+            cover_letters_folder = config.get("paths", {}).get("cover_letters_dir", "cover_letters")
+        
         self.cover_letters_dir = Path(cover_letters_folder)
     
     def navigate_to_upload_menu(self):
-        """Navigate to document upload page"""
         try:
             print("\n📤 Navigating to upload menu...")
             
@@ -456,15 +418,6 @@ class CoverLetterUploader:
             return False
     
     def upload_file(self, pdf_filename):
-        """
-        Upload a single PDF file
-        
-        Args:
-            pdf_filename: Name of the PDF file (with extension)
-            
-        Returns:
-            True if successful, False otherwise
-        """
         try:
             # Extract document name (without .pdf)
             doc_name = pdf_filename.replace(".pdf", "")
@@ -504,21 +457,12 @@ class CoverLetterUploader:
             return False
     
     def get_uploaded_files_log(self):
-        """
-        Get the log file tracking already uploaded files
-        
-        Returns:
-            Path to the log file
-        """
-        return Path("data") / "uploaded_cover_letters.json"
+        from .config import load_app_config
+        config = load_app_config()
+        data_dir = config.get("paths", {}).get("data_dir", "data")
+        return Path(data_dir) / "uploaded_cover_letters.json"
     
     def load_uploaded_files(self):
-        """
-        Load the list of already uploaded files
-        
-        Returns:
-            Set of uploaded filenames
-        """
         log_file = self.get_uploaded_files_log()
         if log_file.exists():
             with open(log_file, 'r', encoding='utf-8') as f:
@@ -527,12 +471,6 @@ class CoverLetterUploader:
         return set()
     
     def save_uploaded_file(self, filename):
-        """
-        Mark a file as uploaded
-        
-        Args:
-            filename: Name of the uploaded file
-        """
         log_file = self.get_uploaded_files_log()
         log_file.parent.mkdir(exist_ok=True)
         
@@ -545,12 +483,6 @@ class CoverLetterUploader:
             json.dump({"uploaded_files": sorted(list(uploaded))}, f, indent=2)
     
     def upload_all_cover_letters(self):
-        """
-        Upload all PDF files in the cover_letters directory that haven't been uploaded yet
-        
-        Returns:
-            Dictionary with statistics
-        """
         stats = {
             "total_files": 0,
             "uploaded": 0,

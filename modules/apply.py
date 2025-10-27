@@ -1,4 +1,4 @@
-"""Application Module - Automates applying to jobs from the Geese section"""
+"""Application Module - Automates applying to jobs from the configured WaterlooWorks folder"""
 
 from __future__ import annotations
 
@@ -23,25 +23,28 @@ from .config import load_app_config
 
 
 class WaterlooWorksApplicator:
-    """Automate job applications on WaterlooWorks from the Geese jobs list."""
-
-    def __init__(self, driver, cover_letters_folder="cover_letters", waterlooworks_folder="geese", use_database=True):
-        """
-        Initialize applicator
+    
+    def __init__(self, driver, waterlooworks_folder: str, cover_letters_folder: Optional[str] = None, use_database=True):
+        if not waterlooworks_folder:
+            raise ValueError(
+                "waterlooworks_folder is required for application automation. "
+                "You must specify which WaterlooWorks folder to apply from. "
+                "This prevents accidentally applying to all 2000+ jobs."
+            )
         
-        Args:
-            driver: Selenium WebDriver instance
-            cover_letters_folder: Folder containing cover letters (default: "cover_letters")
-            waterlooworks_folder: WaterlooWorks folder name (default: "geese")
-            use_database: Whether to track applications in database (default: True)
-        """
         self.driver = driver
-        self.cover_letters_folder = cover_letters_folder
-        self.waterlooworks_folder = waterlooworks_folder
-        self.use_database = use_database
         
-        # Load config for LLM model names
+        # Load config
         self.config = load_app_config()
+        paths_config = self.config.get("paths", {})
+        
+        if cover_letters_folder is None:
+            cover_letters_folder = paths_config.get("cover_letters_dir", "cover_letters")
+        self.cover_letters_folder = cover_letters_folder
+        
+        self.waterlooworks_folder = waterlooworks_folder
+        
+        self.use_database = use_database
         
         # Initialize agent factory for document classification
         from .agents import AgentFactory
@@ -62,13 +65,6 @@ class WaterlooWorksApplicator:
         print(f"✅ Document classifier initialized with {self.classifier_agent.provider}/{self.classifier_agent.model}")
 
     def track_application(self, job_id: str, status: str = "submitted", cover_letter_path: Optional[str] = None):
-        """Track application in database
-        
-        Args:
-            job_id: WaterlooWorks job ID
-            status: Application status (e.g., "submitted", "draft", "failed")
-            cover_letter_path: Optional path to cover letter file
-        """
         if not self.use_database:
             return
         
@@ -91,17 +87,7 @@ class WaterlooWorksApplicator:
         except Exception as e:
             print(f"   ⚠️  Warning: Could not track application in database: {e}")
 
-    # ---------- Navigation helpers (borrowed pattern from cover_letter_generator) ----------
-    def navigate_to_geese_jobs(self) -> bool:
-        """Navigate to the specified WaterlooWorks folder"""
-        print(f"\n📁 Navigating to '{self.waterlooworks_folder}' folder...")
-        success = navigate_to_folder(self.driver, self.waterlooworks_folder)
-        if success:
-            print(f"   ✓ '{self.waterlooworks_folder}' folder opened")
-        return success
-
-    def get_geese_jobs_from_page(self) -> List[Dict]:
-        """Return basic job rows from current Geese page"""
+    def parse_geese_jobs_from_page(self) -> List[Dict]:
         jobs: List[Dict] = []
         try:
             job_rows = get_jobs_from_page(self.driver)
@@ -170,9 +156,6 @@ class WaterlooWorksApplicator:
             return (False, None)
 
     def detect_external_required(self, additional_info: Optional[str]) -> Tuple[bool, Optional[str]]:
-        """
-        Use DocumentClassifierAgent to detect if external application is required.
-        """
         if not additional_info or additional_info == "N/A":
             return (False, None)
         
@@ -208,7 +191,6 @@ class WaterlooWorksApplicator:
             return False
 
     def start_application(self) -> bool:
-        """Click the Apply button from the floating action bar in the job details panel."""
         try:
             buttons = WebDriverWait(self.driver, TIMEOUT).until(
                 EC.presence_of_all_elements_located(
@@ -281,14 +263,6 @@ class WaterlooWorksApplicator:
             return context
 
     def wait_for_prescreen_and_wizard(self, timeout_seconds: int = 600, skip_prescreening: bool = False) -> dict:
-        """
-        The apply form (#applyForm) is always present; content changes by step.
-        We wait until the form is past the 'Pre-Screening Questions' step and shows
-        'Application Options' (or an equivalent documents/package/Submit state) that we can automate.
-        
-        Returns:
-            dict with 'success' (bool) and 'has_prescreen' (bool) keys
-        """
         try:
             WebDriverWait(self.driver, TIMEOUT).until(
                 EC.presence_of_element_located((By.ID, "applyForm"))
@@ -384,12 +358,6 @@ class WaterlooWorksApplicator:
     def fill_package_and_submit(
         self, organization: str, job_title: str, attempt_select_docs: bool = True
     ) -> bool:
-        """Create a custom application package, pick resume, select existing cover letter, then submit.
-
-        Notes:
-          - Avoids 'Default Application Package' so cover letter can be attached.
-          - Uses APPLICANT_NAME env var if provided to format package name, e.g., 'Aman Zaveri - {job_title}'.
-        """
         try:
             form = WebDriverWait(self.driver, TIMEOUT).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "#applyForm"))
@@ -539,17 +507,6 @@ class WaterlooWorksApplicator:
         max_applications: int = 10,
         skip_prescreening: bool = False,
     ) -> Dict:
-        """
-        Apply to jobs in the Geese list, up to a maximum number.
-
-        Args:
-            cached_jobs: Full scraped jobs list to cross-reference metadata like additional_info
-            max_applications: Max number of applications to submit this session
-            skip_prescreening: If True, skip jobs that have pre-screening questions
-
-        Returns:
-            Stats dictionary with lists of outcomes
-        """
         stats = {
             "attempted": 0,
             "applied": 0,
@@ -560,8 +517,10 @@ class WaterlooWorksApplicator:
             "failed": [],  # (job_id, company, title, reason)
         }
 
-        if not self.navigate_to_geese_jobs():
+        print(f"\n📁 Navigating to '{self.waterlooworks_folder}' folder...")
+        if not navigate_to_folder(self.driver, self.waterlooworks_folder):
             return stats
+        print(f"   ✓ '{self.waterlooworks_folder}' folder opened")
 
         num_pages = get_pagination_pages(self.driver)
         total_applied = 0
@@ -570,7 +529,7 @@ class WaterlooWorksApplicator:
         by_id = {str(j.get("id")): j for j in (cached_jobs or [])}
 
         for page in range(1, num_pages + 1):
-            jobs = self.get_geese_jobs_from_page()
+            jobs = self.parse_geese_jobs_from_page()
             if not jobs:
                 if page < num_pages:
                     go_to_next_page(self.driver)

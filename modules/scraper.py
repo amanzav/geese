@@ -2,6 +2,7 @@
 
 import time
 import traceback
+from typing import Optional
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -13,7 +14,7 @@ from .utils import (
     smart_page_wait, click_and_wait, smart_element_click, fast_presence_check,
     timer
 )
-from .llm_assistant import CompensationExtractor
+from .agents import AgentFactory
 from .database import get_db
 
 
@@ -25,11 +26,12 @@ class WaterlooWorksScraper:
         
         Args:
             driver: Selenium WebDriver instance (from auth)
-            llm_provider: LLM provider for compensation extraction
+            llm_provider: LLM provider for compensation extraction (deprecated - uses config)
         """
         self.driver = driver
-        self.llm_provider = llm_provider
-        self.compensation_extractor = None
+        self.llm_provider = llm_provider  # Kept for backwards compatibility
+        self._agent_factory = None
+        self._keyword_agent = None
 
     def go_to_jobs_page(self):
         """Navigate to jobs page and apply optional program filter - OPTIMIZED"""
@@ -206,18 +208,27 @@ class WaterlooWorksScraper:
                             sections[section_key] = content
                         break  # Found matching section, move to next div
 
-            # Extract compensation using LLM
+            # Extract compensation using LLM agent
             if compensation_raw != "N/A":
                 try:
-                    # Lazy initialize compensation extractor
-                    if self.compensation_extractor is None:
-                        self.compensation_extractor = CompensationExtractor(
-                            provider=self.llm_provider
-                        )
+                    # Lazy initialize keyword agent for compensation extraction
+                    if self._keyword_agent is None:
+                        if self._agent_factory is None:
+                            from .config import load_app_config
+                            config = load_app_config()
+                            agent_config = {
+                                "keyword_extractor_agent": {
+                                    "provider": config.agents.keyword_extractor_agent.get("provider", "groq"),
+                                    "model": config.agents.keyword_extractor_agent.get("model", "llama-3.1-8b-instant")
+                                }
+                            }
+                            self._agent_factory = AgentFactory(
+                                config=agent_config,
+                                enable_tracking=config.agents.enable_token_tracking
+                            )
+                        self._keyword_agent = self._agent_factory.get_keyword_extractor_agent()
                     
-                    comp_data = self.compensation_extractor.extract_compensation(
-                        compensation_raw
-                    )
+                    comp_data = self._keyword_agent.extract_compensation(compensation_raw)
                     sections["compensation"] = comp_data
                 except Exception as e:
                     print(f"  ⚠️  Error extracting compensation: {e}")
@@ -254,17 +265,21 @@ class WaterlooWorksScraper:
                 del job_data["row_element"]
             return job_data
 
-    def save_job_to_folder(self, job_data, folder_name="geese"):
+    def save_job_to_folder(self, job_data, folder_name: Optional[str] = None):
         """
         Save a job to a specific folder in WaterlooWorks
 
         Args:
             job_data: Job data dictionary (must have 'row_element' or be in details view)
-            folder_name: Name of the folder to save to (default: "geese")
+            folder_name: Name of the folder to save to (uses config if not specified)
 
         Returns:
             bool: True if successful, False otherwise
         """
+        if folder_name is None:
+            from .config import load_app_config
+            config = load_app_config()
+            folder_name = config.get("waterlooworks_folder", "geese")
         try:
             # Check if panel is already open, if not, open it
             panel_already_open = False

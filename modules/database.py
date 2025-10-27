@@ -1,5 +1,5 @@
 """
-Database Module for Geese
+Database Module for WaterlooWorks Automator
 Handles all SQLite database operations
 """
 
@@ -16,9 +16,13 @@ CURRENT_SCHEMA_VERSION = 1
 
 
 class Database:
-    """SQLite database manager for Geese"""
+    """SQLite database manager for WaterlooWorks Automator"""
 
-    def __init__(self, db_path: str = "data/geese.db"):
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path is None:
+            from .config import load_app_config
+            config = load_app_config()
+            db_path = config.get("paths", {}).get("database_path", "data/geese.db")
         self.db_path = db_path
         self._ensure_db_exists()
         self._check_and_migrate_schema()
@@ -384,8 +388,12 @@ class Database:
     # SAVED FOLDERS TABLE OPERATIONS
     # ========================================================================
 
-    def mark_job_saved(self, job_id: str, folder_name: str = "geese") -> bool:
+    def mark_job_saved(self, job_id: str, folder_name: Optional[str] = None) -> bool:
         """Mark a job as saved to a WaterlooWorks folder"""
+        if folder_name is None:
+            from .config import load_app_config
+            config = load_app_config()
+            folder_name = config.get("waterlooworks_folder", "geese")
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -399,8 +407,12 @@ class Database:
             print(f"❌ Error marking job saved: {e}")
             return False
 
-    def is_job_saved(self, job_id: str, folder_name: str = "geese") -> bool:
+    def is_job_saved(self, job_id: str, folder_name: Optional[str] = None) -> bool:
         """Check if job is already saved to folder"""
+        if folder_name is None:
+            from .config import load_app_config
+            config = load_app_config()
+            folder_name = config.get("waterlooworks_folder", "geese")
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''

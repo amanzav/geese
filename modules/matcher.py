@@ -45,7 +45,9 @@ class ResumeMatcher:
         self.matcher_config = self.config.matcher
 
         # Cache paths
-        self.resume_cache_path = resume_cache_path or "data/resume_parsed.txt"
+        if resume_cache_path is None:
+            resume_cache_path = self.config.get("paths", {}).get("resume_cache_path", "data/resume_parsed.txt")
+        self.resume_cache_path = resume_cache_path
         self.use_database = use_database
 
         # Internal state

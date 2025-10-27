@@ -1,25 +1,15 @@
 """Unified filtering engine for WaterlooWorks job analysis.
 
-Supports both batch filtering (post-analysis) and real-time filtering (during scraping).
+Supports batch filtering (post-analysis).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional
-
-
-@dataclass
-class FilterDecision:
-    """Represents the outcome of evaluating a job against filter rules."""
-
-    skip: bool
-    auto_save: bool
-    message: Optional[str] = None
+from typing import Dict, Iterable, List
 
 
 class FilterEngine:
-    """Unified filter engine for batch and real-time job filtering."""
+    """Unified filter engine for batch job filtering."""
 
     def __init__(self, config: Dict):
         """Initialize filter engine with configuration."""
@@ -87,44 +77,6 @@ class FilterEngine:
             filtered.append(result)
 
         return filtered
-
-    def decide_realtime(
-        self,
-        job_data: Dict,
-        match: Dict,
-        auto_save_enabled: bool,
-    ) -> FilterDecision:
-        """
-        Make a filtering decision for real-time job processing.
-        
-        Args:
-            job_data: Raw job data dictionary
-            match: Match analysis results
-            auto_save_enabled: Whether auto-save is enabled
-            
-        Returns:
-            FilterDecision indicating whether to skip, save, or continue
-        """
-        # Check if job should be skipped entirely
-        skip, reason = self._should_skip_job(job_data)
-        if skip:
-            return FilterDecision(skip=True, auto_save=False, message=f"Skipped ({reason})")
-
-        # If auto-save is disabled, don't save but don't skip
-        if not auto_save_enabled:
-            return FilterDecision(skip=False, auto_save=False, message="Auto-save disabled")
-
-        # Check score threshold for auto-save
-        fit_score = match.get("fit_score", 0)
-        if fit_score < self.auto_save_threshold:
-            return FilterDecision(
-                skip=False,
-                auto_save=False,
-                message=f"Not saved (score < {self.auto_save_threshold})",
-            )
-
-        # All checks passed - auto-save this job
-        return FilterDecision(skip=False, auto_save=True)
 
     def _should_skip_job(self, job_data: Dict) -> tuple[bool, str]:
         """

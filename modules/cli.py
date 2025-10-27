@@ -14,11 +14,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Analyze WaterlooWorks jobs")
     parser.add_argument(
         "--mode",
-        choices=["realtime", "batch", "analyze", "cover-letter", "upload-covers", "db-stats", "db-export"],
+        choices=["batch", "analyze", "cover-letter", "upload-covers", "db-stats", "db-export"],
         default="batch",
         help=(
-            "Operation mode: realtime (scrape+analyze live), batch (scrape then analyze), "
-            "analyze (cached only), cover-letter (generate covers for Geese jobs), "
+            "Operation mode: batch (scrape then analyze), "
+            "analyze (cached only), cover-letter (generate covers for saved jobs), "
             "upload-covers (upload all covers to WW), "
             "db-stats (show database statistics), db-export (export database to markdown)"
         ),
@@ -51,13 +51,6 @@ def run_cli(argv: Optional[Sequence[str]] = None, analyzer: Optional["JobAnalyze
         from modules.pipeline import JobAnalyzer
 
         analyzer = JobAnalyzer()
-
-    if args.mode == "realtime":
-        from modules.auth import obtain_authenticated_session
-
-        auth = obtain_authenticated_session()
-        analyzer.run_realtime_pipeline(auto_save_to_folder=True, auth=auth)
-        return
 
     if args.mode == "batch":
         analyzer.run_full_pipeline(
@@ -137,7 +130,11 @@ def _run_cover_letter_mode(analyzer: "JobAnalyzer") -> None:
 
     cover_config = analyzer.config.get("cover_letter", {})
     resume_path = analyzer.config.get("resume_path", "input/resume.pdf")
-    cached_jobs_path = cover_config.get("cached_jobs_path", "data/jobs_sample.json")
+    
+    # Get paths from config
+    paths_config = analyzer.config.get("paths", {})
+    cached_jobs_path = cover_config.get("cached_jobs_path", 
+                                        os.path.join(paths_config.get("data_dir", "data"), "jobs_scraped.json"))
     prompt_template = cover_config.get("prompt_template", "Write a professional cover letter.")
 
     resume_text = _load_resume_text(resume_path)
@@ -151,7 +148,15 @@ def _run_cover_letter_mode(analyzer: "JobAnalyzer") -> None:
         prompt_template,
         api_key=os.getenv("GEMINI_API_KEY"),
     )
-    stats = generator.generate_all_cover_letters(cached_jobs_path)
+    
+    # Get folder name from config (required for cover letter generation)
+    folder_name = analyzer.config.get("waterlooworks_folder", "geese")
+    print(f"\n📁 Generating cover letters for folder: '{folder_name}'")
+    
+    stats = generator.generate_all_cover_letters(
+        folder_name=folder_name,
+        cached_jobs_path=cached_jobs_path
+    )
 
     auth.driver.quit()
 
@@ -211,15 +216,20 @@ def _load_resume_text(resume_path: str) -> str:
         print(f"✓ Loaded resume from PDF: {resume_path}")
         return resume_text
 
-    parsed_path = "data/resume_parsed.txt"
+    # Try to load from config paths
+    from modules.config import load_app_config
+    config = load_app_config()
+    paths_config = config.get("paths", {})
+    parsed_path = paths_config.get("resume_cache_path", "data/resume_parsed.txt")
+    
     if os.path.exists(parsed_path):
         with open(parsed_path, "r", encoding="utf-8") as handle:
             resume_text = handle.read()
-        print("✓ Loaded resume from text: data/resume_parsed.txt")
+        print(f"✓ Loaded resume from text: {parsed_path}")
         return resume_text
 
     print("❌ Error: Resume not found!")
-    print(f"   Expected: {resume_path} OR data/resume_parsed.txt")
+    print(f"   Expected: {resume_path} OR {parsed_path}")
     print("   Please add your resume to one of these locations.")
     return ""
 
@@ -253,6 +263,7 @@ def _run_db_stats_mode() -> None:
 def _run_db_export_mode() -> None:
     """Export database matches to markdown report"""
     from modules.database import get_db
+    from modules.config import load_app_config
     from datetime import datetime
     
     print("=" * 70)
@@ -282,8 +293,10 @@ def _run_db_export_mode() -> None:
         return
     
     # Generate markdown
+    config = load_app_config()
+    data_dir = config.get("paths", {}).get("data_dir", "data")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    md_path = f"data/database_export_{timestamp}.md"
+    md_path = os.path.join(data_dir, f"database_export_{timestamp}.md")
     
     with open(md_path, 'w', encoding='utf-8') as f:
         f.write(f"# Job Matches Export\n\n")

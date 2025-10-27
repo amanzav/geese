@@ -4,6 +4,7 @@ Embeddings Module - Handles text embedding generation and vector search
 
 import os
 import json
+from typing import Optional
 import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
@@ -12,11 +13,17 @@ from sentence_transformers import SentenceTransformer
 class EmbeddingsManager:
     """Manage text embeddings and vector similarity search"""
     
-    def __init__(self, model_name="sentence-transformers/all-MiniLM-L6-v2", cache_dir="embeddings/resume"):
+    def __init__(self, model_name="sentence-transformers/all-MiniLM-L6-v2", cache_dir: Optional[str] = None):
         """Initialize embeddings manager with model and cache directory"""
         print(f"📦 Loading embedding model: {model_name}")
         self.model = SentenceTransformer(model_name)
         self.model_name = model_name
+        
+        if cache_dir is None:
+            from .config import load_app_config
+            config = load_app_config()
+            cache_dir = config.get("paths", {}).get("embeddings_dir", "embeddings/resume")
+        
         self.cache_dir = cache_dir
         self.index = None
         self.resume_bullets = []
