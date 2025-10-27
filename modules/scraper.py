@@ -21,17 +21,35 @@ from .database import get_db
 class WaterlooWorksScraper:
     """Handle job scraping on WaterlooWorks"""
 
-    def __init__(self, driver, llm_provider="gemini"):
+    def __init__(self, driver, llm_provider="gemini", use_supabase=True):
         """Initialize scraper
         
         Args:
             driver: Selenium WebDriver instance (from auth)
             llm_provider: LLM provider for compensation extraction (deprecated - uses config)
+            use_supabase: Whether to upload jobs to Supabase cloud database (default: True)
         """
         self.driver = driver
         self.llm_provider = llm_provider  # Kept for backwards compatibility
+        self.use_supabase = use_supabase
         self._agent_factory = None
         self._keyword_agent = None
+        self._supabase_client = None
+
+    def _get_supabase_client(self):
+        """Lazy initialize and return Supabase client"""
+        if self._supabase_client is None and self.use_supabase:
+            try:
+                from .supabase_client import SupabaseClient
+                from dotenv import load_dotenv
+                load_dotenv()
+                self._supabase_client = SupabaseClient()
+                print("✅ Connected to Supabase cloud database")
+            except Exception as e:
+                print(f"⚠️  Warning: Could not connect to Supabase: {e}")
+                print("   Jobs will only be saved locally")
+                self.use_supabase = False
+        return self._supabase_client
 
     def go_to_jobs_page(self):
         """Navigate to jobs page and apply optional program filter - OPTIMIZED"""
@@ -529,24 +547,42 @@ class WaterlooWorksScraper:
             print(f"\n🎉 Total jobs scraped: {len(all_jobs)}")
             
             if use_database:
-                print(f"✅ All jobs saved to database\n")
+                storage_info = "local database"
+                if self.use_supabase:
+                    storage_info += " and Supabase cloud"
+                print(f"✅ All jobs saved to {storage_info}\n")
             
             return all_jobs
 
     def save_jobs_to_database(self, jobs):
-        """Save scraped jobs to SQLite database
+        """Save scraped jobs to SQLite database and optionally Supabase cloud
         
         Args:
             jobs: List of job dictionaries to save
             
         Returns:
-            int: Number of jobs successfully saved
+            int: Number of jobs successfully saved to local database
         """
+        # Save to local SQLite database
         db = get_db()
         saved_count = 0
         
         for job in jobs:
             if db.insert_job(job):
                 saved_count += 1
+        
+        # Also save to Supabase cloud if enabled
+        if self.use_supabase and jobs:
+            supabase = self._get_supabase_client()
+            if supabase:
+                try:
+                    print(f"☁️  Uploading {len(jobs)} jobs to Supabase cloud...")
+                    supabase_count = 0
+                    for job in jobs:
+                        if supabase.insert_job(job):
+                            supabase_count += 1
+                    print(f"✅ Uploaded {supabase_count}/{len(jobs)} jobs to cloud")
+                except Exception as e:
+                    print(f"⚠️  Warning: Error uploading to Supabase: {e}")
         
         return saved_count

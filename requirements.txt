@@ -22,6 +22,8 @@ pyperclip>=1.8.2
 
 # Database
 # sqlite3 (built-in with Python)
+supabase>=2.9.0           # Supabase Python client
+psycopg2-binary>=2.9.9    # PostgreSQL adapter
 
 # Future dependencies (add when needed):
 # openai>=1.0.0         # OpenAI API (alternative)

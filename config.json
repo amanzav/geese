@@ -1,6 +1,16 @@
 {
   "resume_path": "input/resume.pdf",
   
+  "paths": {
+    "_comment": "Configurable directory paths for all data storage",
+    "data_dir": "data",
+    "cover_letters_dir": "cover_letters",
+    "embeddings_dir": "embeddings/resume",
+    "database_path": "data/geese.db",
+    "resume_cache_path": "data/resume_parsed.txt",
+    "token_usage_log": "data/token_usage.json"
+  },
+  
   "explicit_skills": {
     "languages_frameworks": ["Python", "JavaScript", "TypeScript", "React", "FastAPI", "Flask", "Django", "C++", "Kotlin", "Java"],
     "tools_technologies": ["PostgreSQL", "MongoDB", "DynamoDB", "Supabase", "Redis", "SQLite", "Prisma"],
@@ -62,12 +72,17 @@
   
   "cover_letter": {
     "template_path": "template.docx",
-    "cached_jobs_path": "data/jobs_scraped.json",
     "prompt_template": "You are an expert cover letter writer. Write a professional, enthusiastic cover letter that highlights relevant skills and experience. Keep it between 100-400 words. Format it properly with paragraphs."
   },
   
   "waterlooworks_folder": "geese",
   "preferred_locations": [],
   "keywords_to_match": [],
-  "companies_to_avoid": []
+  "companies_to_avoid": [],
+  
+  "supabase": {
+    "_comment": "Cloud database configuration - jobs are stored in Supabase for sharing across users",
+    "enabled": true,
+    "_note": "Credentials should be in .env file: SUPABASE_URL, SUPABASE_SERVICE_KEY, SUPABASE_ANON_KEY"
+  }
 }

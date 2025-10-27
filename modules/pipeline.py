@@ -137,7 +137,8 @@ class JobAnalyzer:
 
             # Scrape with incremental saving
             llm_provider = self.config.get("matcher", {}).get("llm_provider", "gemini")
-            scraper = WaterlooWorksScraper(auth.driver, llm_provider=llm_provider)
+            use_supabase = self.config.get("supabase", {}).get("enabled", True)
+            scraper = WaterlooWorksScraper(auth.driver, llm_provider=llm_provider, use_supabase=use_supabase)
             self.scraper = scraper  # Store for later use
             scraper.go_to_jobs_page()
             

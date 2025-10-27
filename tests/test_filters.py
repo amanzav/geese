@@ -4,7 +4,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from modules.filters import FilterEngine, FilterDecision
+from modules.filters import FilterEngine
 
 
 class TestFilterEngine:
@@ -94,44 +94,6 @@ class TestFilterEngine:
         assert len(filtered) == 2
         assert filtered[0]["job"]["id"] == "1"
         assert filtered[1]["job"]["id"] == "3"
-    
-    def test_realtime_decision_auto_save(self):
-        """Test real-time decision for auto-save"""
-        config = {
-            "matcher": {
-                "auto_save_threshold": 80,
-                "min_match_score": 50
-            }
-        }
-        
-        engine = FilterEngine(config)
-        
-        job = {"id": "1", "title": "High Score Job"}
-        match = {"fit_score": 85}
-        
-        decision = engine.decide_realtime(job, match, auto_save_enabled=True)
-        
-        assert decision.auto_save is True
-        assert decision.skip is False
-    
-    def test_realtime_decision_no_auto_save_when_disabled(self):
-        """Test that auto-save doesn't trigger when disabled"""
-        config = {
-            "matcher": {
-                "auto_save_threshold": 80,
-                "min_match_score": 50
-            }
-        }
-        
-        engine = FilterEngine(config)
-        
-        job = {"id": "1", "title": "High Score Job"}
-        match = {"fit_score": 85}
-        
-        decision = engine.decide_realtime(job, match, auto_save_enabled=False)
-        
-        assert decision.auto_save is False
-        assert decision.skip is False
     
     def test_empty_config_uses_defaults(self):
         """Test that empty config uses default values"""

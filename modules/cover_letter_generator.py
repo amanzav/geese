@@ -130,14 +130,47 @@ class CoverLetterGenerator:
         
         return None  # Not in cache
     
-    def scrape_and_cache_job(self, job_basic_info: Dict, cached_jobs_path: str) -> Optional[Dict]:
-        from .scraper import WaterlooWorksScraper
+    def scrape_and_cache_job(self, job_basic_info: Dict) -> Optional[Dict]:
+        """
+        Get job details from database or scrape if not available
         
-        print(f"      🔍 Not in cache - scraping live...")
+        Args:
+            job_basic_info: Basic job info with job_id
+        
+        Returns:
+            Full job details dict or None if failed
+        """
+        from .database import get_db
+        
+        job_id = job_basic_info.get("job_id")
+        
+        # Try to get from database first
+        db = get_db()
+        job_data = db.get_job(job_id)
+        
+        if job_data:
+            print(f"      ✓ Found job in database")
+            
+            # Build description for cover letter generation
+            desc_parts = []
+            if job_data.get("summary") and job_data["summary"] != "N/A":
+                desc_parts.append(f"Job Summary:\n{job_data['summary']}")
+            if job_data.get("responsibilities") and job_data["responsibilities"] != "N/A":
+                desc_parts.append(f"Responsibilities:\n{job_data['responsibilities']}")
+            if job_data.get("skills") and job_data["skills"] != "N/A":
+                desc_parts.append(f"Required Skills:\n{job_data['skills']}")
+            
+            job_data["description"] = "\n\n".join(desc_parts)
+            return job_data
+        
+        # If not in database, try to scrape it
+        print(f"      🔍 Not in database - scraping live...")
         
         try:
+            from .scraper import WaterlooWorksScraper
+            
             # Create a temporary scraper to get details
-            scraper = WaterlooWorksScraper(self.driver)
+            scraper = WaterlooWorksScraper(self.driver, use_supabase=False)
             
             # Add row_element for scraper to click
             job_basic_info["row_element"] = job_basic_info.get("title_element")
@@ -149,19 +182,9 @@ class CoverLetterGenerator:
                 print(f"      ✗ Failed to scrape job details")
                 return None
             
-            # Add to cache file
-            cached_jobs = []
-            if os.path.exists(cached_jobs_path):
-                with open(cached_jobs_path, 'r', encoding='utf-8') as f:
-                    cached_jobs = json.load(f)
-            
-            cached_jobs.append(job_data)
-            
-            # Save updated cache
-            with open(cached_jobs_path, 'w', encoding='utf-8') as f:
-                json.dump(cached_jobs, f, indent=2, ensure_ascii=False)
-            
-            print(f"      ✓ Scraped and cached job details")
+            # Save to database
+            db.insert_job(job_data)
+            print(f"      ✓ Scraped and saved job to database")
             
             # Build description for cover letter generation
             desc_parts = []
@@ -247,7 +270,14 @@ Aman Zaveri"""
             print(f"      ✗ Error saving cover letter: {e}")
             return False
     
-    def generate_all_cover_letters(self, folder_name: str, cached_jobs_path=None):
+    def generate_all_cover_letters(self, folder_name: str):
+        """
+        Generate cover letters for all jobs in a WaterlooWorks folder
+        Uses database for job details instead of JSON cache
+        
+        Args:
+            folder_name: Name of the WaterlooWorks folder
+        """
         if not folder_name:
             raise ValueError(
                 "folder_name is required for cover letter generation. "
@@ -262,15 +292,11 @@ Aman Zaveri"""
             "failed": 0
         }
         
-        # Load cached jobs if available
-        cached_jobs = None
-        if cached_jobs_path and os.path.exists(cached_jobs_path):
-            try:
-                with open(cached_jobs_path, 'r', encoding='utf-8') as f:
-                    cached_jobs = json.load(f)
-                print(f"✓ Loaded {len(cached_jobs)} cached jobs")
-            except Exception as e:
-                print(f"⚠ Could not load cached jobs: {e}")
+        # Import database
+        from .database import get_db
+        db = get_db()
+        
+        print(f"✓ Using database for job details")
         
         # Navigate to specified folder
         print(f"\n📁 Navigating to '{folder_name}' folder...")
@@ -320,17 +346,28 @@ Aman Zaveri"""
                 stats["skipped_existing"] += 1
                 continue
             
-            # Try to get from cache first
-            job_details = self.get_job_details_from_cache(job_id, cached_jobs or [])
+            # Get job details from database
+            job_details = db.get_job(job_id)
             
-            # If not in cache, scrape it and add to cache
-            if not job_details and cached_jobs_path:
-                job_details = self.scrape_and_cache_job(job_basic, cached_jobs_path)
+            # If not in database, try to scrape it
+            if not job_details:
+                job_details = self.scrape_and_cache_job(job_basic)
             
             if not job_details:
                 print(f"      ✗ Could not get job details")
                 stats["failed"] += 1
                 continue
+            
+            # Build description if not already present
+            if "description" not in job_details:
+                desc_parts = []
+                if job_details.get("summary") and job_details["summary"] != "N/A":
+                    desc_parts.append(f"Job Summary:\n{job_details['summary']}")
+                if job_details.get("responsibilities") and job_details["responsibilities"] != "N/A":
+                    desc_parts.append(f"Responsibilities:\n{job_details['responsibilities']}")
+                if job_details.get("skills") and job_details["skills"] != "N/A":
+                    desc_parts.append(f"Required Skills:\n{job_details['skills']}")
+                job_details["description"] = "\n\n".join(desc_parts)
             
             # Check if we have a real description
             description = job_details.get("description", "")

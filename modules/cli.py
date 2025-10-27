@@ -131,10 +131,6 @@ def _run_cover_letter_mode(analyzer: "JobAnalyzer") -> None:
     cover_config = analyzer.config.get("cover_letter", {})
     resume_path = analyzer.config.get("resume_path", "input/resume.pdf")
     
-    # Get paths from config
-    paths_config = analyzer.config.get("paths", {})
-    cached_jobs_path = cover_config.get("cached_jobs_path", 
-                                        os.path.join(paths_config.get("data_dir", "data"), "jobs_scraped.json"))
     prompt_template = cover_config.get("prompt_template", "Write a professional cover letter.")
 
     resume_text = _load_resume_text(resume_path)
@@ -152,11 +148,9 @@ def _run_cover_letter_mode(analyzer: "JobAnalyzer") -> None:
     # Get folder name from config (required for cover letter generation)
     folder_name = analyzer.config.get("waterlooworks_folder", "geese")
     print(f"\n📁 Generating cover letters for folder: '{folder_name}'")
+    print(f"   Using database for job details")
     
-    stats = generator.generate_all_cover_letters(
-        folder_name=folder_name,
-        cached_jobs_path=cached_jobs_path
-    )
+    stats = generator.generate_all_cover_letters(folder_name=folder_name)
 
     auth.driver.quit()
 
