@@ -283,6 +283,127 @@ class WaterlooWorksScraper:
                 del job_data["row_element"]
             return job_data
 
+    def scrape_single_job_details(self, job_id: str):
+        """
+        Scrape details for a single job by its ID.
+        Assumes the job details page is already loaded.
+        
+        Args:
+            job_id: WaterlooWorks job ID
+            
+        Returns:
+            dict: Job data dictionary with all details, or None if scraping failed
+        """
+        try:
+            # Wait for job details panel
+            job_info = WebDriverWait(self.driver, WaitTimes.SLOW, poll_frequency=0.05).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "is--long-form-reading"))
+            )
+            
+            # Wait for question containers
+            WebDriverWait(self.driver, WaitTimes.SLOW, poll_frequency=0.05).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "js--question--container"))
+            )
+            
+            time.sleep(WaitTimes.FAST)
+            
+            # Initialize job data with ID
+            job_data = {"id": job_id}
+            
+            # Try to extract basic info from the page header if available
+            try:
+                # Look for job title in the header
+                title_elem = job_info.find_element(By.CSS_SELECTOR, "h1, .job-title, [class*='title']")
+                job_data["title"] = title_elem.text.strip() if title_elem else "N/A"
+            except:
+                job_data["title"] = "N/A"
+            
+            # Extract description sections
+            job_divs = job_info.find_elements(By.CLASS_NAME, "js--question--container")
+            
+            # Section mapping
+            SECTION_MAPPINGS = {
+                "Job Summary:": "summary",
+                "Job Responsibilities:": "responsibilities",
+                "Required Skills:": "skills",
+                "Additional Application Information:": "additional_info",
+                "Employment Location Arrangement:": "employment_location_arrangement",
+                "Work Term Duration:": "work_term_duration",
+                "Compensation and Benefits:": "_compensation_raw",
+            }
+            
+            sections = {key: "N/A" for key in SECTION_MAPPINGS.values() if not key.startswith("_")}
+            compensation_raw = "N/A"
+            
+            for div in job_divs:
+                text = div.get_attribute("innerText").strip()
+                
+                for prefix, section_key in SECTION_MAPPINGS.items():
+                    if text.startswith(prefix):
+                        content = text.replace(prefix, "", 1).strip()
+                        if section_key == "_compensation_raw":
+                            compensation_raw = content
+                        else:
+                            sections[section_key] = content
+                        break
+            
+            # Extract compensation using LLM agent
+            if compensation_raw != "N/A":
+                try:
+                    if self._keyword_agent is None:
+                        if self._agent_factory is None:
+                            from .config import load_app_config
+                            config = load_app_config()
+                            agent_config = {
+                                "keyword_extractor_agent": {
+                                    "provider": config.agents.keyword_extractor_agent.get("provider", "groq"),
+                                    "model": config.agents.keyword_extractor_agent.get("model", "llama-3.1-8b-instant")
+                                }
+                            }
+                            self._agent_factory = AgentFactory(
+                                config=agent_config,
+                                enable_tracking=config.agents.enable_token_tracking
+                            )
+                        self._keyword_agent = self._agent_factory.get_keyword_extractor_agent()
+                    
+                    comp_data = self._keyword_agent.extract_compensation(compensation_raw)
+                    sections["compensation"] = comp_data
+                except Exception as e:
+                    print(f"  ⚠️  Error extracting compensation: {e}")
+                    sections["compensation"] = {
+                        "value": None,
+                        "currency": None,
+                        "original_text": compensation_raw,
+                        "time_period": None
+                    }
+            else:
+                sections["compensation"] = {
+                    "value": None,
+                    "currency": None,
+                    "original_text": "N/A",
+                    "time_period": None
+                }
+            
+            # Add all sections to job data
+            job_data.update(sections)
+            
+            # Add placeholder values for fields not available in details view
+            job_data.setdefault("company", "N/A")
+            job_data.setdefault("division", "N/A")
+            job_data.setdefault("location", "N/A")
+            job_data.setdefault("level", "N/A")
+            job_data.setdefault("openings", "0")
+            job_data.setdefault("applications", "0")
+            job_data.setdefault("deadline", "N/A")
+            job_data.setdefault("chances", 0.0)
+            
+            return job_data
+            
+        except Exception as e:
+            print(f"   ✗ Error scraping job {job_id}: {e}")
+            traceback.print_exc()
+            return None
+
     def save_job_to_folder(self, job_data, folder_name: Optional[str] = None):
         """
         Save a job to a specific folder in WaterlooWorks

@@ -116,6 +116,18 @@ class SupabaseClient:
             print(f"❌ Error inserting job {job_data.get('id')}: {e}")
             return False
     
+    def upsert_job(self, job_data: Dict[str, Any]) -> bool:
+        """
+        Alias for insert_job - upserts (insert or update) a job in the cloud database
+        
+        Args:
+            job_data: Dictionary containing job information
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        return self.insert_job(job_data)
+    
     def insert_jobs_batch(self, jobs: List[Dict[str, Any]], batch_size: int = 100) -> Dict[str, int]:
         """
         Insert multiple jobs in batches for better performance
@@ -170,6 +182,18 @@ class SupabaseClient:
         except Exception as e:
             print(f"❌ Error fetching job {job_id}: {e}")
             return None
+    
+    def get_job_by_id(self, job_id: str) -> Optional[Dict]:
+        """
+        Alias for get_job - fetch a single job by ID
+        
+        Args:
+            job_id: The job ID to fetch
+            
+        Returns:
+            Job dictionary or None if not found
+        """
+        return self.get_job(job_id)
     
     def get_jobs_by_ids(self, job_ids: List[str]) -> List[Dict]:
         """

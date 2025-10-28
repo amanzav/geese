@@ -1,6 +1,6 @@
 'use client'
 
-import { Home, Briefcase, FileText, Settings, BarChart3 } from 'lucide-react'
+import { Home, Briefcase, FileText, Settings, BarChart3, Folder } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -21,6 +21,11 @@ const menuItems = [
     title: 'Dashboard',
     icon: Home,
     href: '/',
+  },
+  {
+    title: 'Folders',
+    icon: Folder,
+    href: '/folders',
   },
   {
     title: 'Jobs',

@@ -25,6 +25,11 @@ pyperclip>=1.8.2
 supabase>=2.9.0           # Supabase Python client
 psycopg2-binary>=2.9.9    # PostgreSQL adapter
 
+# API Server
+fastapi>=0.104.0          # FastAPI for REST API
+uvicorn[standard]>=0.24.0 # ASGI server for FastAPI
+pydantic>=2.0.0           # Data validation
+
 # Future dependencies (add when needed):
 # openai>=1.0.0         # OpenAI API (alternative)
 # rich>=13.7.0          # For beautiful CLI
